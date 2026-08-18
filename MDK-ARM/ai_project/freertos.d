@@ -39,6 +39,8 @@ ai_project\freertos.o: ../Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_hal_sram.h
 ai_project\freertos.o: ../Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_ll_fsmc.h
 ai_project\freertos.o: ../Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_hal_pwr.h
 ai_project\freertos.o: ../Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_hal_pwr_ex.h
+ai_project\freertos.o: ../Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_hal_sd.h
+ai_project\freertos.o: ../Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_ll_sdmmc.h
 ai_project\freertos.o: ../Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_hal_spi.h
 ai_project\freertos.o: ../Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_hal_tim.h
 ai_project\freertos.o: ../Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_hal_tim_ex.h
@@ -183,5 +185,5 @@ ai_project\freertos.o: ../LVGL/src/../src/extra/widgets/imgbtn/lv_imgbtn.h
 ai_project\freertos.o: ../LVGL/src/../src/extra/widgets/span/lv_span.h
 ai_project\freertos.o: ../HARDWARE/LVGL/lv_port_disp.h
 ai_project\freertos.o: ../HARDWARE/LVGL/lv_port_indev.h
-ai_project\freertos.o: ..\HARDWARE\ESP8266\esp8266.h
+ai_project\freertos.o: ../HARDWARE/ESP8266/esp8266.h
 ai_project\freertos.o: ../Core/Inc/usart.h

@@ -19,6 +19,8 @@
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
 #include "cmsis_os.h"
+#include "dma.h"
+#include "sdio.h"
 #include "spi.h"
 #include "usart.h"
 #include "gpio.h"
@@ -30,6 +32,10 @@
 #include "touch.h"
 #include <stdio.h>
 #include "delay.h"
+#include "malloc.h"
+#include "fontupd.h"
+#include "text.h"
+#include "myiic.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -94,10 +100,12 @@ int main(void)
 
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
+  MX_DMA_Init();
   MX_USART1_UART_Init();
   MX_SPI1_Init();
   MX_FSMC_Init();
   MX_USART3_UART_Init();
+  //MX_SDIO_SD_Init();
   /* USER CODE BEGIN 2 */
 	delay_init();
   IIC_Init();
@@ -105,6 +113,20 @@ int main(void)
 
   // ====== 初始化触摸屏 ======
   tp_dev.init();                 // 初始化触摸屏（电阻/电容自动检测）
+    my_mem_init(SRAMIN);        // 初始化内部内存池
+    exfuns_init();              // 挂载 FATFS 文件系统
+
+    if(font_init() == 0) {
+        // 字库已存在，可以显示中文
+        Show_Str(10, 10, 220, 200, "字库就绪", 16, 0);
+    } else {
+        // 字库不存在，从 SD 卡更新
+        update_font(10, 50, 16, "0:");
+    } 
+	
+	LCD_Clear(BLACK);                         // 清屏
+  Show_Str(10, 10, 200, 200, "字库就绪", 16, 0);  // 测试中文
+  delay_ms(2000);                           // 停2秒让你看
   /* USER CODE END 2 */
 
   /* Init scheduler */
@@ -151,7 +173,7 @@ void SystemClock_Config(void)
   RCC_OscInitStruct.PLL.PLLM = 8;
   RCC_OscInitStruct.PLL.PLLN = 336;
   RCC_OscInitStruct.PLL.PLLP = RCC_PLLP_DIV2;
-  RCC_OscInitStruct.PLL.PLLQ = 4;
+  RCC_OscInitStruct.PLL.PLLQ = 7;
   if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK)
   {
     Error_Handler();
