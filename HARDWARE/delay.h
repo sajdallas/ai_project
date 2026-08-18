@@ -1,0 +1,10 @@
+#ifndef __DELAY_H
+#define __DELAY_H
+
+#include "sys.h"
+
+void delay_init(void);
+void delay_us(uint32_t us);
+void delay_ms(uint16_t ms);
+
+#endif /* __DELAY_H */

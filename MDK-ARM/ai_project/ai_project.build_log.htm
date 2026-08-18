@@ -1,0 +1,75 @@
+<html>
+<body>
+<pre>
+<h1>µVision Build Log</h1>
+<h2>Tool Versions:</h2>
+IDE-Version: ¦ÌVision V5.39.0.0
+Copyright (C) 2023 ARM Ltd and ARM Germany GmbH. All rights reserved.
+License Information: 1 jw02072@163.com, 1, LIC=LSNXV-P1YES-129LE-5F51L-RK7DJ-TKB6J
+ 
+Tool Versions:
+Toolchain:       MDK-ARM Plus  Version: 5.39.0.0
+Toolchain Path:  D:\keil\ARM\ARMCC\Bin
+C Compiler:      Armcc.exe V5.06 update 6 (build 750)
+Assembler:       Armasm.exe V5.06 update 6 (build 750)
+Linker/Locator:  ArmLink.exe V5.06 update 6 (build 750)
+Library Manager: ArmAr.exe V5.06 update 6 (build 750)
+Hex Converter:   FromElf.exe V5.06 update 6 (build 750)
+CPU DLL:         SARMCM3.DLL V5.39.0.0
+Dialog DLL:      DCM.DLL V1.17.5.0
+Target DLL:      STLink\ST-LINKIII-KEIL_SWO.dll V3.2.0.0
+Dialog DLL:      TCM.DLL V1.56.4.0
+ 
+<h2>Project:</h2>
+D:\STMPRO\ai_project\MDK-ARM\ai_project.uvprojx
+Project File Date:  08/17/2026
+
+<h2>Output:</h2>
+*** Using Compiler 'V5.06 update 6 (build 750)', folder: 'D:\keil\ARM\ARMCC\Bin'
+Build target 'ai_project'
+compiling freertos.c...
+../Core/Inc/FreeRTOSConfig.h(170): warning:  #1-D: last line of file ends without a newline
+  #endif /* FREERTOS_CONFIG_H */
+../LVGL/src/../src/misc/../../../lv_conf.h(784): warning:  #1-D: last line of file ends without a newline
+  #endif /*End of "Content enable"*/
+../HARDWARE/LVGL/lv_port_disp.h(6): warning:  #1-D: last line of file ends without a newline
+  #endif
+../HARDWARE/LVGL/lv_port_indev.h(6): warning:  #1-D: last line of file ends without a newline
+  #endif
+..\HARDWARE\ESP8266\esp8266.h(42): warning:  #1-D: last line of file ends without a newline
+  #endif
+../Core/Src/freertos.c(340): warning:  #188-D: enumerated type mixed with another type
+      m.type = 10;
+../Core/Src/freertos.c(481): warning:  #1-D: last line of file ends without a newline
+  /* USER CODE END Application */
+../Core/Src/freertos.c: 7 warnings, 0 errors
+linking...
+Program Size: Code=192172 RO-data=54568 RW-data=780 ZI-data=128036  
+FromELF: creating hex file...
+"ai_project\ai_project.axf" - 0 Error(s), 7 Warning(s).
+
+<h2>Software Packages used:</h2>
+
+Package Vendor: ARM
+                http://www.keil.com/pack/ARM.CMSIS.5.9.0.pack
+                ARM::CMSIS@5.9.0
+                CMSIS (Common Microcontroller Software Interface Standard)
+   * Component: CORE Version: 5.6.0
+
+Package Vendor: Keil
+                https://www.keil.com/pack/Keil.STM32F4xx_DFP.3.1.1.pack
+                Keil::STM32F4xx_DFP@3.1.1
+                STMicroelectronics STM32F4 Series Device Support
+
+<h2>Collection of Component include folders:</h2>
+  ./RTE/_ai_project
+  D:/keil_pack/ARM/CMSIS/5.9.0/CMSIS/Core/Include
+
+<h2>Collection of Component Files used:</h2>
+
+   * Component: ARM::CMSIS:CORE@5.6.0
+      Include file:  CMSIS/Core/Include/tz_context.h
+Build Time Elapsed:  00:00:04
+</pre>
+</body>
+</html>

@@ -1,0 +1,10 @@
+ai_project\lv_printf.o: ..\LVGL\src\misc\lv_printf.c
+ai_project\lv_printf.o: ..\LVGL\src\misc\lv_printf.h
+ai_project\lv_printf.o: ..\LVGL\src\misc\../lv_conf_internal.h
+ai_project\lv_printf.o: D:\keil\ARM\ARMCC\Bin\..\include\stdint.h
+ai_project\lv_printf.o: ..\LVGL\src\misc\../lv_conf_kconfig.h
+ai_project\lv_printf.o: ..\LVGL\src\misc\../../../lv_conf.h
+ai_project\lv_printf.o: D:\keil\ARM\ARMCC\Bin\..\include\stdarg.h
+ai_project\lv_printf.o: D:\keil\ARM\ARMCC\Bin\..\include\stddef.h
+ai_project\lv_printf.o: ..\LVGL\src\misc\lv_types.h
+ai_project\lv_printf.o: D:\keil\ARM\ARMCC\Bin\..\include\stdbool.h

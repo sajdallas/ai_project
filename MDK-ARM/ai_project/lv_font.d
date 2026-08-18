@@ -1,0 +1,16 @@
+ai_project\lv_font.o: ..\LVGL\src\font\lv_font.c
+ai_project\lv_font.o: ..\LVGL\src\font\lv_font.h
+ai_project\lv_font.o: ..\LVGL\src\font\../lv_conf_internal.h
+ai_project\lv_font.o: D:\keil\ARM\ARMCC\Bin\..\include\stdint.h
+ai_project\lv_font.o: ..\LVGL\src\font\../lv_conf_kconfig.h
+ai_project\lv_font.o: ..\LVGL\src\font\../../../lv_conf.h
+ai_project\lv_font.o: D:\keil\ARM\ARMCC\Bin\..\include\stddef.h
+ai_project\lv_font.o: D:\keil\ARM\ARMCC\Bin\..\include\stdbool.h
+ai_project\lv_font.o: ..\LVGL\src\font\lv_symbol_def.h
+ai_project\lv_font.o: ..\LVGL\src\font\../misc/lv_area.h
+ai_project\lv_font.o: ..\LVGL\src\font\../misc/lv_utils.h
+ai_project\lv_font.o: ..\LVGL\src\font\../misc/lv_log.h
+ai_project\lv_font.o: ..\LVGL\src\font\../misc/lv_types.h
+ai_project\lv_font.o: ..\LVGL\src\font\../misc/lv_assert.h
+ai_project\lv_font.o: ..\LVGL\src\font\../misc/lv_mem.h
+ai_project\lv_font.o: D:\keil\ARM\ARMCC\Bin\..\include\string.h
