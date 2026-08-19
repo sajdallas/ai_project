@@ -27,8 +27,28 @@ Project File Date:  08/19/2026
 <h2>Output:</h2>
 *** Using Compiler 'V5.06 update 6 (build 750)', folder: 'D:\keil\ARM\ARMCC\Bin'
 Build target 'ai_project'
+Note: source file '..\LVGL\src\font\lv_font_punct16.c' - object file renamed from 'ai_project\lv_font_punct16.o' to 'ai_project\lv_font_punct16_1.o'.
 Note: source file '..\MALLOC\malloc.c' - object file renamed from 'ai_project\malloc.o' to 'ai_project\malloc_1.o'.
-"ai_project\ai_project.axf" - 0 Error(s), 0 Warning(s).
+compiling main.c...
+../Core/Src/main.c(117): warning:  #223-D: function "exfuns_init" declared implicitly
+      exfuns_init();              // 挂载 FATFS 文件系统
+../Core/Src/main.c: 1 warning, 0 errors
+compiling freertos.c...
+../LVGL/src/../src/misc/../../../lv_conf.h(785): warning:  #1-D: last line of file ends without a newline
+  #endif /*End of "Content enable"*/
+../HARDWARE/LVGL/lv_port_disp.h(6): warning:  #1-D: last line of file ends without a newline
+  #endif
+../HARDWARE/LVGL/lv_port_indev.h(6): warning:  #1-D: last line of file ends without a newline
+  #endif
+../HARDWARE/ESP8266/esp8266.h(42): warning:  #1-D: last line of file ends without a newline
+  #endif
+../Core/Src/freertos.c(329): warning:  #188-D: enumerated type mixed with another type
+      m.type = 10;
+../Core/Src/freertos.c: 5 warnings, 0 errors
+linking...
+Program Size: Code=194524 RO-data=169092 RW-data=1156 ZI-data=1135292  
+FromELF: creating hex file...
+"ai_project\ai_project.axf" - 0 Error(s), 6 Warning(s).
 
 <h2>Software Packages used:</h2>
 
@@ -51,7 +71,7 @@ Package Vendor: Keil
 
    * Component: ARM::CMSIS:CORE@5.6.0
       Include file:  CMSIS/Core/Include/tz_context.h
-Build Time Elapsed:  00:00:01
+Build Time Elapsed:  00:00:04
 </pre>
 </body>
 </html>

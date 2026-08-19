@@ -47,13 +47,13 @@ ai_project\freertos.o: ../Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_hal_tim_ex.
 ai_project\freertos.o: ../Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_hal_uart.h
 ai_project\freertos.o: ../Middlewares/Third_Party/FreeRTOS/Source/CMSIS_RTOS_V2/cmsis_os.h
 ai_project\freertos.o: ../Middlewares/Third_Party/FreeRTOS/Source/CMSIS_RTOS_V2/cmsis_os2.h
+ai_project\freertos.o: D:\keil\ARM\ARMCC\Bin\..\include\stdio.h
 ai_project\freertos.o: ../HARDWARE/LCD/lcd.h
 ai_project\freertos.o: ../HARDWARE/sys.h
 ai_project\freertos.o: D:\keil\ARM\ARMCC\Bin\..\include\stdlib.h
 ai_project\freertos.o: ../HARDWARE/TOUCH/touch.h
 ai_project\freertos.o: ../HARDWARE/TOUCH/ott2001a.h
 ai_project\freertos.o: ../HARDWARE/TOUCH/gt9147.h
-ai_project\freertos.o: D:\keil\ARM\ARMCC\Bin\..\include\stdio.h
 ai_project\freertos.o: ../LVGL/src/lvgl.h
 ai_project\freertos.o: ../LVGL/src/../lvgl.h
 ai_project\freertos.o: ../LVGL/src/../src/misc/lv_log.h

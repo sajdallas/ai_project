@@ -108,6 +108,7 @@
 "ai_project\lv_font_montserrat_24.o"
 "ai_project\lv_font_montserrat_14.o"
 "ai_project\lv_font_cjk16.o"
+"ai_project\lv_font_punct16_1.o"
 "ai_project\lv_hal_disp.o"
 "ai_project\lv_hal_indev.o"
 "ai_project\lv_hal_tick.o"
