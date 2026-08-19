@@ -4,13 +4,14 @@
 #include "fontupd.h"
 //////////////////////////////////////////////////////////////////////////////////	 
  
-//ºº×ÖÏÔÊ¾ Çý¶¯´úÂë	   
-//STM32F4¹¤³ÌÄ£°å-¿âº¯Êý°æ±¾
-//ÌÔ±¦µêÆÌ£ºhttp://mcudev.taobao.com									  
+//ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ê¾ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½	   
+//STM32F4ï¿½ï¿½ï¿½ï¿½Ä£ï¿½ï¿½-ï¿½âº¯ï¿½ï¿½ï¿½æ±¾
+//ï¿½Ô±ï¿½ï¿½ï¿½ï¿½Ì£ï¿½http://mcudev.taobao.com									  
 ////////////////////////////////////////////////////////////////////////////////// 	 
  					     
-void Get_HzMat(unsigned char *code,unsigned char *mat,u8 size);			//µÃµ½ºº×ÖµÄµãÕóÂë
-void Show_Font(u16 x,u16 y,u8 *font,u8 size,u8 mode);					//ÔÚÖ¸¶¨Î»ÖÃÏÔÊ¾Ò»¸öºº×Ö
-void Show_Str(u16 x,u16 y,u16 width,u16 height,u8*str,u8 size,u8 mode);	//ÔÚÖ¸¶¨Î»ÖÃÏÔÊ¾Ò»¸ö×Ö·û´® 
+void Get_HzMat(unsigned char *code,unsigned char *mat,u8 size);			//ï¿½Ãµï¿½ï¿½ï¿½ï¿½ÖµÄµï¿½ï¿½ï¿½ï¿½ï¿½
+void Show_Font(u16 x,u16 y,u8 *font,u8 size,u8 mode);					//ï¿½ï¿½Ö¸ï¿½ï¿½Î»ï¿½ï¿½ï¿½ï¿½Ê¾Ò»ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
+void Show_Str(u16 x,u16 y,u16 width,u16 height,u8*str,u8 size,u8 mode);	//ï¿½ï¿½Ö¸ï¿½ï¿½Î»ï¿½ï¿½ï¿½ï¿½Ê¾Ò»ï¿½ï¿½ï¿½Ö·ï¿½ï¿½ï¿½ 
 void Show_Str_Mid(u16 x,u16 y,u8*str,u8 size,u8 len);
+void Show_Str_UTF8(u16 x,u16 y,u16 width,u16 height,u8*str,u8 size,u8 mode);
 #endif

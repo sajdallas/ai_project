@@ -40,7 +40,7 @@
 
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
-
+u8 gbk_buf[64];
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
@@ -116,17 +116,25 @@ int main(void)
     my_mem_init(SRAMIN);        // 初始化内部内存池
     exfuns_init();              // 挂载 FATFS 文件系统
 
-    if(font_init() == 0) {
-        // 字库已存在，可以显示中文
-        Show_Str(10, 10, 220, 200, "字库就绪", 16, 0);
-    } else {
-        // 字库不存在，从 SD 卡更新
-        update_font(10, 50, 16, "0:");
-    } 
+//    if(font_init() == 0) {
+//					//u16 len = utf8_to_gbk_buf((u8*)"字库就绪", gbk_buf);
+//					u8 t1[] = {0xD7, 0xD6, 0}; Show_Str(10,  10, 200, 30, t1, 16, 0);
+//					u8 t2[] = {0xBF, 0xE2, 0}; Show_Str(10,  40, 200, 30, t2, 16, 0);
+//					u8 t3[] = {0xBE, 0xCD, 0}; Show_Str(10,  70, 200, 30, t3, 16, 0);
+//					u8 t4[] = {0xD0, 0xF7, 0}; Show_Str(10, 100, 200, 30, t4, 16, 0);
+//					delay_ms(3000);
+////					if (len > 0) {
+////							Show_Str(10, 10, 200, 200, gbk_buf, 16, 0);
+////					}
+//    } else {
+//        // 字库不存在，从 SD 卡更新
+//        update_font(10, 50, 16, "0:");
+//    } 
 	
-	LCD_Clear(BLACK);                         // 清屏
-  Show_Str(10, 10, 200, 200, "字库就绪", 16, 0);  // 测试中文
-  delay_ms(2000);                           // 停2秒让你看
+//	LCD_Clear(BLACK);                         // 清屏
+//  utf8_to_gbk_buf((u8*)"字库就绪", gbk_buf);
+//  Show_Str(10, 10, 200, 200, gbk_buf, 16, 0);
+		delay_ms(2000);
   /* USER CODE END 2 */
 
   /* Init scheduler */

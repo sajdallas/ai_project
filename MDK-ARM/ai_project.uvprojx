@@ -1720,6 +1720,11 @@
               <FilePath>..\LVGL\src\font\lv_font_montserrat_14.c</FilePath>
             </File>
             <File>
+              <FileName>lv_font_cjk16.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\LVGL\src\font\lv_font_cjk16.c</FilePath>
+            </File>
+            <File>
               <FileName>lv_hal_disp.c</FileName>
               <FileType>1</FileType>
               <FilePath>..\LVGL\src\hal\lv_hal_disp.c</FilePath>

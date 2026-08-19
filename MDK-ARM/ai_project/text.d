@@ -44,3 +44,6 @@ ai_project\text.o: ..\TEXT\text.h
 ai_project\text.o: D:\keil\ARM\ARMCC\Bin\..\include\string.h
 ai_project\text.o: ../Core/Inc/usart.h
 ai_project\text.o: ../Core/Inc/main.h
+ai_project\text.o: ../FATFS/src/ff.h
+ai_project\text.o: ../FATFS/src/integer.h
+ai_project\text.o: ../FATFS/src/ffconf.h
