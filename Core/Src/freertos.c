@@ -203,7 +203,6 @@ void StartDefaultTask(void *argument)
 * @param argument: Not used
 * @retval None
 */
-static lv_obj_t *pending_scr = NULL;
 /* USER CODE END Header_lvglStartTask */
 void lvglStartTask(void *argument)
 {
@@ -260,11 +259,6 @@ void lvglStartTask(void *argument)
             if (ai_reply_countdown == 0) {
                 lv_scr_load(idle_scr);
             }
-        }
-
-        if (pending_scr) {
-            lv_scr_load(pending_scr);
-            pending_scr = NULL;
         }
 
         lv_timer_handler();
@@ -394,11 +388,19 @@ static void back_click_handler(lv_event_t *e)
     lv_scr_load(main_scr);
 }
 
-//static lv_obj_t *pending_scr = NULL;
-
-static void main_menu_handler(lv_event_t *e)
+static void main_to_idle_handler(lv_event_t *e)
 {
-    pending_scr = lv_event_get_user_data(e);
+    lv_scr_load(idle_scr);
+}
+
+static void main_to_status_handler(lv_event_t *e)
+{
+    lv_scr_load(status_scr);
+}
+
+static void main_to_settings_handler(lv_event_t *e)
+{
+    lv_scr_load(settings_scr);
 }
 
 
@@ -435,7 +437,7 @@ static void create_main_ui(void)
     lv_obj_set_style_text_font(lbl1, &lv_font_cjk16, 0);
     lv_obj_set_style_text_color(lbl1, lv_color_white(), 0);
     lv_obj_center(lbl1);
-    lv_obj_add_event_cb(btn1, main_menu_handler, LV_EVENT_RELEASED, idle_scr);
+    lv_obj_add_event_cb(btn1, main_to_idle_handler, LV_EVENT_CLICKED, NULL);
 
     /* 按钮2: "状态", 100x75, 右上位置, 深紫色 (#2d2d5e) */
     lv_obj_t *btn2 = lv_btn_create(main_scr);
@@ -448,7 +450,7 @@ static void create_main_ui(void)
     lv_obj_set_style_text_font(lbl2, &lv_font_cjk16, 0);
     lv_obj_set_style_text_color(lbl2, lv_color_white(), 0);
     lv_obj_center(lbl2);
-    lv_obj_add_event_cb(btn2, main_menu_handler, LV_EVENT_RELEASED, status_scr);
+    lv_obj_add_event_cb(btn2, main_to_status_handler, LV_EVENT_CLICKED, NULL);
 
     /* 按钮3: "设置", 100x75, 左下位置, 深紫色 (#2d2d5e) */
     lv_obj_t *btn3 = lv_btn_create(main_scr);
@@ -461,7 +463,7 @@ static void create_main_ui(void)
     lv_obj_set_style_text_font(lbl3, &lv_font_cjk16, 0);
     lv_obj_set_style_text_color(lbl3, lv_color_white(), 0);
     lv_obj_center(lbl3);
-    lv_obj_add_event_cb(btn3, main_menu_handler, LV_EVENT_RELEASED, settings_scr);
+    lv_obj_add_event_cb(btn3, main_to_settings_handler, LV_EVENT_CLICKED, NULL);
 
 }
 
