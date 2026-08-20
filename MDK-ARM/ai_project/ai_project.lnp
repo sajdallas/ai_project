@@ -61,6 +61,8 @@
 "ai_project\lv_port_indev.o"
 "ai_project\esp8266.o"
 "ai_project\sdio_sdcard.o"
+"ai_project\robot_face_anim.o"
+"ai_project\asr_pro.o"
 "ai_project\lv_disp.o"
 "ai_project\lv_event.o"
 "ai_project\lv_group.o"

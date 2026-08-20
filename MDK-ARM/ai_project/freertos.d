@@ -188,3 +188,5 @@ ai_project\freertos.o: ../HARDWARE/LVGL/lv_port_indev.h
 ai_project\freertos.o: ../HARDWARE/ESP8266/esp8266.h
 ai_project\freertos.o: ../Core/Inc/usart.h
 ai_project\freertos.o: ../Core/Inc/pinyin_data.h
+ai_project\freertos.o: ../HARDWARE/../HARDWARE/ASR_PRO/asr_pro.h
+ai_project\freertos.o: ../HARDWARE/../HARDWARE/ROBOT_FACE/robot_face_anim.h

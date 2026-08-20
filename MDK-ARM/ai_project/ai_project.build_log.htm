@@ -22,7 +22,7 @@ Dialog DLL:      TCM.DLL V1.56.4.0
  
 <h2>Project:</h2>
 D:\STMPRO\ai_project\MDK-ARM\ai_project.uvprojx
-Project File Date:  08/19/2026
+Project File Date:  08/20/2026
 
 <h2>Output:</h2>
 *** Using Compiler 'V5.06 update 6 (build 750)', folder: 'D:\keil\ARM\ARMCC\Bin'
@@ -38,17 +38,23 @@ compiling freertos.c...
   #endif
 ../HARDWARE/ESP8266/esp8266.h(42): warning:  #1-D: last line of file ends without a newline
   #endif
-../Core/Src/freertos.c(316): warning:  #27-D: character value is out of range
+../HARDWARE/../HARDWARE/ASR_PRO/asr_pro.h(48): warning:  #1-D: last line of file ends without a newline
+  #endif /* __ASR_PRO_H */
+../HARDWARE/../HARDWARE/ROBOT_FACE/robot_face_anim.h(27): warning:  #1-D: last line of file ends without a newline
+  #endif
+../Core/Src/freertos.c(379): warning:  #27-D: character value is out of range
       esp_log("\xE6\xAD\xA3\xE5\x9C\xA8\xE5\x88\x9D\xE5\xA7\x8B\xE5\x8C\x96ESP8266..."); /* 正在初始化ESP8266... */
-../Core/Src/freertos.c(376): warning:  #188-D: enumerated type mixed with another type
+../Core/Src/freertos.c(448): warning:  #223-D: function "ASR_GetMessage" declared implicitly
+          if (ASR_GetMessage(&msg)) {
+../Core/Src/freertos.c(463): warning:  #188-D: enumerated type mixed with another type
       m.type = 10;
-../Core/Src/freertos.c(1035): warning:  #1-D: last line of file ends without a newline
+../Core/Src/freertos.c(1127): warning:  #1-D: last line of file ends without a newline
   /* USER CODE END Application */
-../Core/Src/freertos.c: 7 warnings, 0 errors
+../Core/Src/freertos.c: 10 warnings, 0 errors
 linking...
-Program Size: Code=198144 RO-data=191216 RW-data=1192 ZI-data=1151616  
+Program Size: Code=199716 RO-data=191296 RW-data=1308 ZI-data=1152344  
 FromELF: creating hex file...
-"ai_project\ai_project.axf" - 0 Error(s), 7 Warning(s).
+"ai_project\ai_project.axf" - 0 Error(s), 10 Warning(s).
 
 <h2>Software Packages used:</h2>
 

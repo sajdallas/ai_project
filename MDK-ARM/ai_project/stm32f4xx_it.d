@@ -40,3 +40,4 @@ ai_project\stm32f4xx_it.o: ../Core/Inc/stm32f4xx_it.h
 ai_project\stm32f4xx_it.o: ../HARDWARE/ESP8266/esp8266.h
 ai_project\stm32f4xx_it.o: ../Core/Inc/usart.h
 ai_project\stm32f4xx_it.o: D:\keil\ARM\ARMCC\Bin\..\include\string.h
+ai_project\stm32f4xx_it.o: ../HARDWARE/../HARDWARE/ASR_PRO/asr_pro.h

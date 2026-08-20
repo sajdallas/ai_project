@@ -36,6 +36,8 @@ LV_FONT_DECLARE(lv_font_cjk16);
 #include "lv_port_indev.h"
 #include "esp8266.h"
 #include "pinyin_data.h"
+#include "../HARDWARE/ASR_PRO/asr_pro.h"
+#include "../HARDWARE/ROBOT_FACE/robot_face_anim.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -134,6 +136,18 @@ osMessageQueueId_t esp_ai_req_queueHandle;
 const osMessageQueueAttr_t esp_ai_req_queue_attributes = {
   .name = "esp_ai_req_queue"
 };
+/* Definitions for asrTask */
+osThreadId_t asrTaskHandle;
+const osThreadAttr_t asrTask_attributes = {
+  .name = "asrTask",
+  .stack_size = 1024 * 4,
+  .priority = (osPriority_t) osPriorityNormal,
+};
+/* Definitions for asr_queue */
+osMessageQueueId_t asr_queueHandle;
+const osMessageQueueAttr_t asr_queue_attributes = {
+  .name = "asr_queue"
+};
 
 /* Private function prototypes -----------------------------------------------*/
 /* USER CODE BEGIN FunctionPrototypes */
@@ -149,6 +163,7 @@ static lv_obj_t *status_scr;
 static lv_obj_t *settings_scr;
 static lv_obj_t *ai_scr;
 static lv_obj_t *status_info_label;   /* 系统状态页面的信息标签 */
+static lv_obj_t *robot_eye_l, *robot_eye_r, *robot_pupil_l, *robot_pupil_r, *robot_mouth; /* 机器人表情 */
 static void esp_log(const char *text);
 static void esp_log_ai(const char *text);
 static void extract_content(const char *resp, char *out, int out_sz);
@@ -158,7 +173,8 @@ static void chat_send_to_ai(const char *user_msg);
 static void chat_build_json(char *json, int json_sz);
 static void chat_ui_update(void);
 static void chat_send_handler(lv_event_t *e);
-static void kb_toggle_handler(lv_event_t *e);
+static void ai_input_click_handler(lv_event_t *e);
+static void ai_scr_click_handler(lv_event_t *e);
 static void ime_update_candidates(void);
 static void ime_commit(const char *cand, int pinyin_len);
 static void ime_cand_handler(lv_event_t *e);
@@ -169,6 +185,7 @@ static void ime_value_changed_handler(lv_event_t *e);
 void StartDefaultTask(void *argument);
 void lvglStartTask(void *argument);
 void esp8266StartTask(void *argument);
+void asrStartTask(void *argument);
 
 void MX_FREERTOS_Init(void); /* (MISRA C 2004 rule 8.1) */
 
@@ -204,6 +221,9 @@ void MX_FREERTOS_Init(void) {
   /* creation of esp_ai_req_queue */
   esp_ai_req_queueHandle = osMessageQueueNew (1, 256, &esp_ai_req_queue_attributes);
 
+  /* creation of asr_queue */
+  asr_queueHandle = osMessageQueueNew (4, sizeof(asr_msg_t), &asr_queue_attributes);
+
   /* USER CODE BEGIN RTOS_QUEUES */
   /* add queues, ... */
   /* USER CODE END RTOS_QUEUES */
@@ -217,6 +237,9 @@ void MX_FREERTOS_Init(void) {
 
   /* creation of esp8266Task */
   esp8266TaskHandle = osThreadNew(esp8266StartTask, NULL, &esp8266Task_attributes);
+
+  /* creation of asrTask */
+  asrTaskHandle = osThreadNew(asrStartTask, NULL, &asrTask_attributes);
 
   /* USER CODE BEGIN RTOS_THREADS */
   /* USER CODE END RTOS_THREADS */
@@ -269,6 +292,9 @@ void lvglStartTask(void *argument)
     
     lv_scr_load(idle_scr);
 
+    /* 屏幕加载后初始化表情动画（此时布局已确定，坐标正确） */
+    robot_face_anim_init(robot_eye_l, robot_eye_r, robot_pupil_l, robot_pupil_r, robot_mouth, idle_scr);
+
     esp_msg_t m;
     char status_buf[512] = "";
     int status_line = 0;
@@ -293,6 +319,43 @@ void lvglStartTask(void *argument)
             chat_pending = 0;
         }
 
+        /* 读取语音识别消息并处理 */
+        asr_msg_t asr_msg;
+        if (osMessageQueueGet(asr_queueHandle, &asr_msg, NULL, 0) == osOK) {
+            if (asr_msg.type == ASR_TYPE_COMMAND) {
+                switch (asr_msg.cmd_id) {
+                case ASR_CMD_IDLE:
+                    lv_scr_load(idle_scr);
+                    break;
+                case ASR_CMD_MAIN_MENU:
+                    lv_scr_load(main_scr);
+                    break;
+                case ASR_CMD_STATUS:
+                    lv_scr_load(status_scr);
+                    break;
+                case ASR_CMD_AI_CHAT:
+                    lv_scr_load(ai_scr);
+                    break;
+                case ASR_CMD_SETTINGS:
+                    lv_scr_load(settings_scr);
+                    break;
+                case ASR_CMD_BACK:
+                    lv_scr_load(main_scr);
+                    break;
+                default:
+                    break;
+                }
+            } else if (asr_msg.type == ASR_TYPE_TEXT) {
+                /* 语音识别到文字内容，填入输入框并发送给 AI */
+                if (chat_input != NULL) {
+                    lv_textarea_set_text(chat_input, asr_msg.text);
+                    lv_scr_load(ai_scr);
+                    chat_send_to_ai(asr_msg.text);
+                }
+            }
+        }
+
+        robot_face_tick();
         lv_timer_handler();
         osDelay(5);
     }
@@ -364,6 +427,30 @@ void esp8266StartTask(void *argument)
         }
     }
   /* USER CODE END esp8266StartTask */
+}
+
+/* USER CODE BEGIN Header_asrStartTask */
+/**
+* @brief Function implementing the asrTask thread.
+* @param argument: Not used
+* @retval None
+*/
+/* USER CODE END Header_asrStartTask */
+void asrStartTask(void *argument)
+{
+  /* USER CODE BEGIN asrStartTask */
+    asr_msg_t msg;
+
+    ASR_Init();
+
+    for (;;) {
+        /* 读取 ASR PRO 串口数据，解析后写入消息队列 */
+        if (ASR_GetMessage(&msg)) {
+            osMessageQueuePut(asr_queueHandle, &msg, 0, 100);
+        }
+        osDelay(20);
+    }
+  /* USER CODE END asrStartTask */
 }
 
 /* Private application code --------------------------------------------------*/
@@ -453,15 +540,21 @@ static void chat_send_handler(lv_event_t *e)
     lv_textarea_set_text(chat_input, "");
 }
 
-static void kb_toggle_handler(lv_event_t *e)
+static void ai_input_click_handler(lv_event_t *e)
 {
     if (lv_obj_has_flag(kb, LV_OBJ_FLAG_HIDDEN)) {
         lv_obj_clear_flag(kb, LV_OBJ_FLAG_HIDDEN);
         lv_keyboard_set_textarea(kb, chat_input);
-        /* 键盘此时已布局完成，把候选栏贴到键盘上方并刷新 */
         lv_obj_align_to(ime_bar, kb, LV_ALIGN_OUT_TOP_MID, 0, 0);
         ime_update_candidates();
-    } else {
+        lv_obj_clear_flag(ime_bar, LV_OBJ_FLAG_HIDDEN);
+    }
+}
+
+static void ai_scr_click_handler(lv_event_t *e)
+{
+    lv_obj_t *target = lv_event_get_target(e);
+    if (target == ai_scr) {
         lv_obj_add_flag(kb, LV_OBJ_FLAG_HIDDEN);
         lv_obj_add_flag(ime_bar, LV_OBJ_FLAG_HIDDEN);
     }
@@ -720,45 +813,53 @@ static void create_robot_face(void)
     idle_scr = lv_obj_create(NULL);
     lv_obj_set_style_bg_color(idle_scr, lv_color_black(), 0);
 
-    /* 左眼: 青色圆形, 36x36, 位置偏左上 */
-    lv_obj_t *eye_left = lv_obj_create(idle_scr);
-    lv_obj_set_size(eye_left, 36, 36);
-    lv_obj_set_style_bg_color(eye_left, lv_color_hex(0x00ff41), 0);
-    lv_obj_set_style_radius(eye_left, LV_RADIUS_CIRCLE, 0);
-    lv_obj_set_style_border_width(eye_left, 0, 0);
-    lv_obj_align(eye_left, LV_ALIGN_CENTER, -50, -40);
+    /* 左眼: 绿色圆形, 36x36, 位置偏左上 */
+    robot_eye_l = lv_obj_create(idle_scr);
+    lv_obj_set_size(robot_eye_l, 36, 36);
+    lv_obj_set_style_bg_color(robot_eye_l, lv_color_white(), 0);
+    lv_obj_set_style_radius(robot_eye_l, LV_RADIUS_CIRCLE, 0);
+    lv_obj_set_style_border_width(robot_eye_l, 0, 0);
+    lv_obj_align(robot_eye_l, LV_ALIGN_CENTER, -50, -40);
 
-    /* 右眼: 青色圆形, 36x36, 位置偏右上 */
-    lv_obj_t *eye_right = lv_obj_create(idle_scr);
-    lv_obj_set_size(eye_right, 36, 36);
-    lv_obj_set_style_bg_color(eye_right, lv_color_hex(0x00ff41), 0);
-    lv_obj_set_style_radius(eye_right, LV_RADIUS_CIRCLE, 0);
-    lv_obj_set_style_border_width(eye_right, 0, 0);
-    lv_obj_align(eye_right, LV_ALIGN_CENTER, 50, -40);
+    /* 右眼: 绿色圆形, 36x36, 位置偏右上 */
+    robot_eye_r = lv_obj_create(idle_scr);
+    lv_obj_set_size(robot_eye_r, 36, 36);
+    lv_obj_set_style_bg_color(robot_eye_r, lv_color_white(), 0);
+    lv_obj_set_style_radius(robot_eye_r, LV_RADIUS_CIRCLE, 0);
+    lv_obj_set_style_border_width(robot_eye_r, 0, 0);
+    lv_obj_align(robot_eye_r, LV_ALIGN_CENTER, 50, -40);
 
     /* 左瞳孔: 黑色圆形, 14x14, 叠加在左眼位置 */
-    lv_obj_t *eye_pupil_l = lv_obj_create(idle_scr);
-    lv_obj_set_size(eye_pupil_l, 14, 14);
-    lv_obj_set_style_bg_color(eye_pupil_l, lv_color_black(), 0);
-    lv_obj_set_style_radius(eye_pupil_l, LV_RADIUS_CIRCLE, 0);
-    lv_obj_set_style_border_width(eye_pupil_l, 0, 0);
-    lv_obj_align(eye_pupil_l, LV_ALIGN_CENTER, -50, -40);
+    robot_pupil_l = lv_obj_create(idle_scr);
+    lv_obj_set_size(robot_pupil_l, 14, 14);
+    lv_obj_set_style_bg_color(robot_pupil_l, lv_color_black(), 0);
+    lv_obj_set_style_radius(robot_pupil_l, LV_RADIUS_CIRCLE, 0);
+    lv_obj_set_style_border_width(robot_pupil_l, 0, 0);
+    {
+        lv_coord_t pw = lv_obj_get_width(idle_scr);
+        lv_coord_t ph = lv_obj_get_height(idle_scr);
+        lv_obj_set_pos(robot_pupil_l, pw / 2 - 50 - 7, ph / 2 - 40 - 7);
+    }
 
     /* 右瞳孔: 黑色圆形, 14x14, 叠加在右眼位置 */
-    lv_obj_t *eye_pupil_r = lv_obj_create(idle_scr);
-    lv_obj_set_size(eye_pupil_r, 14, 14);
-    lv_obj_set_style_bg_color(eye_pupil_r, lv_color_black(), 0);
-    lv_obj_set_style_radius(eye_pupil_r, LV_RADIUS_CIRCLE, 0);
-    lv_obj_set_style_border_width(eye_pupil_r, 0, 0);
-    lv_obj_align(eye_pupil_r, LV_ALIGN_CENTER, 50, -40);
+    robot_pupil_r = lv_obj_create(idle_scr);
+    lv_obj_set_size(robot_pupil_r, 14, 14);
+    lv_obj_set_style_bg_color(robot_pupil_r, lv_color_black(), 0);
+    lv_obj_set_style_radius(robot_pupil_r, LV_RADIUS_CIRCLE, 0);
+    lv_obj_set_style_border_width(robot_pupil_r, 0, 0);
+    {
+        lv_coord_t pw = lv_obj_get_width(idle_scr);
+        lv_coord_t ph = lv_obj_get_height(idle_scr);
+        lv_obj_set_pos(robot_pupil_r, pw / 2 + 50 - 7, ph / 2 - 40 - 7);
+    }
 
-    /* 嘴巴: 青色圆角矩形, 80x20, 居中偏下 */
-    lv_obj_t *mouth = lv_obj_create(idle_scr);
-    lv_obj_set_size(mouth, 80, 20);
-    lv_obj_set_style_bg_color(mouth, lv_color_hex(0x00ff41), 0);
-    lv_obj_set_style_radius(mouth, 10, 0);
-    lv_obj_set_style_border_width(mouth, 0, 0);
-    lv_obj_align(mouth, LV_ALIGN_CENTER, 0, 30);
+    /* 嘴巴: 绿色圆角矩形, 80x20, 居中偏下 */
+    robot_mouth = lv_obj_create(idle_scr);
+    lv_obj_set_size(robot_mouth, 80, 5);
+    lv_obj_set_style_bg_color(robot_mouth, lv_color_white(), 0);
+    lv_obj_set_style_radius(robot_mouth, 10, 0);
+    lv_obj_set_style_border_width(robot_mouth, 0, 0);
+    lv_obj_align(robot_mouth, LV_ALIGN_CENTER, 0, 30);
 
     /* 备选提示文字（已注释）: "Touch to Start" */
     //lv_obj_t *tip = lv_label_create(idle_scr);
@@ -868,19 +969,6 @@ static void create_ai_ui(void)
     lv_obj_center(send_label);
     lv_obj_add_event_cb(chat_send_btn, chat_send_handler, LV_EVENT_CLICKED, NULL);
 
-    /* 键盘折叠按钮 */
-    lv_obj_t *kb_btn = lv_btn_create(ai_scr);
-    lv_obj_set_size(kb_btn, 42, 36);
-    lv_obj_align(kb_btn, LV_ALIGN_TOP_RIGHT, -50, 41);
-    lv_obj_set_style_bg_color(kb_btn, lv_color_hex(0x0d2818), 0);
-    lv_obj_set_style_border_width(kb_btn, 0, 0);
-    lv_obj_t *kb_label = lv_label_create(kb_btn);
-    lv_label_set_text(kb_label, "\xE9\x94\xAE\xE7\x9B\x98"); /* 键盘 */
-    lv_obj_set_style_text_font(kb_label, &lv_font_cjk16, 0);
-    lv_obj_set_style_text_color(kb_label, lv_color_hex(0x00ff41), 0);
-    lv_obj_center(kb_label);
-    lv_obj_add_event_cb(kb_btn, kb_toggle_handler, LV_EVENT_CLICKED, NULL);
-
     /* 对话列表 */
     chat_list = lv_list_create(ai_scr);
     lv_obj_set_size(chat_list, 230, 120);
@@ -924,6 +1012,10 @@ static void create_ai_ui(void)
 
     /* 输入框内容变化 -> 刷新候选栏 */
     lv_obj_add_event_cb(chat_input, ime_value_changed_handler, LV_EVENT_VALUE_CHANGED, NULL);
+
+    /* 点击输入框弹出键盘，点击空白处收起 */
+    lv_obj_add_event_cb(chat_input, ai_input_click_handler, LV_EVENT_CLICKED, NULL);
+    lv_obj_add_event_cb(ai_scr, ai_scr_click_handler, LV_EVENT_CLICKED, NULL);
 }
 
 /* 添加一条消息到对话历史 */
