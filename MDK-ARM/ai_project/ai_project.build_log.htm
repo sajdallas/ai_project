@@ -30,7 +30,7 @@ Build target 'ai_project'
 Note: source file '..\LVGL\src\font\lv_font_punct16.c' - object file renamed from 'ai_project\lv_font_punct16.o' to 'ai_project\lv_font_punct16_1.o'.
 Note: source file '..\MALLOC\malloc.c' - object file renamed from 'ai_project\malloc.o' to 'ai_project\malloc_1.o'.
 compiling freertos.c...
-../LVGL/src/../src/misc/../../../lv_conf.h(785): warning:  #1-D: last line of file ends without a newline
+../LVGL/src/../src/misc/../../../lv_conf.h(786): warning:  #1-D: last line of file ends without a newline
   #endif /*End of "Content enable"*/
 ../HARDWARE/LVGL/lv_port_disp.h(6): warning:  #1-D: last line of file ends without a newline
   #endif
@@ -38,15 +38,17 @@ compiling freertos.c...
   #endif
 ../HARDWARE/ESP8266/esp8266.h(42): warning:  #1-D: last line of file ends without a newline
   #endif
-../Core/Src/freertos.c(342): warning:  #188-D: enumerated type mixed with another type
+../Core/Src/freertos.c(316): warning:  #27-D: character value is out of range
+      esp_log("\xE6\xAD\xA3\xE5\x9C\xA8\xE5\x88\x9D\xE5\xA7\x8B\xE5\x8C\x96ESP8266..."); /* 正在初始化ESP8266... */
+../Core/Src/freertos.c(376): warning:  #188-D: enumerated type mixed with another type
       m.type = 10;
-../Core/Src/freertos.c(623): warning:  #1-D: last line of file ends without a newline
+../Core/Src/freertos.c(1035): warning:  #1-D: last line of file ends without a newline
   /* USER CODE END Application */
-../Core/Src/freertos.c: 6 warnings, 0 errors
+../Core/Src/freertos.c: 7 warnings, 0 errors
 linking...
-Program Size: Code=195216 RO-data=169124 RW-data=1168 ZI-data=1143468  
+Program Size: Code=198144 RO-data=191216 RW-data=1192 ZI-data=1151616  
 FromELF: creating hex file...
-"ai_project\ai_project.axf" - 0 Error(s), 6 Warning(s).
+"ai_project\ai_project.axf" - 0 Error(s), 7 Warning(s).
 
 <h2>Software Packages used:</h2>
 

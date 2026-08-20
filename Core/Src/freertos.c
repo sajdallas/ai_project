@@ -26,6 +26,7 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include <stdio.h>
+#include <string.h>
 #include "lcd.h"
 #include "touch.h"
 #include "lvgl.h"
@@ -34,11 +35,11 @@ LV_FONT_DECLARE(lv_font_cjk16);
 #include "lv_port_disp.h"
 #include "lv_port_indev.h"
 #include "esp8266.h"
+#include "pinyin_data.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
-static lv_obj_t *ai_text;
 
 typedef enum {
     ESP_MSG_INIT,
@@ -53,11 +54,39 @@ typedef struct {
     esp_msg_type_t type;
     char text[128];
 } esp_msg_t;
+
+
+/* ---- AI 对话 ---- */
+#define CHAT_HISTORY_MAX 20          /* 最多保留 20 轮对话 */
+#define CHAT_MSG_LEN     256         /* 每条消息最大长度 */
+
+typedef struct {
+    char role[16];                   /* "user"/"assistant"（"assistant" 含 \0 需 10 字节，8 会截断成 "assista"） */
+    char content[CHAT_MSG_LEN];
+} chat_msg_t;
+
+static chat_msg_t chat_history[CHAT_HISTORY_MAX];
+static int chat_count = 0;           /* 当前对话轮数 */
+static lv_obj_t *chat_list;          /* 对话显示列表 */
+static lv_obj_t *chat_input;         /* 用户输入框 */
+static lv_obj_t *chat_send_btn;      /* 发送按钮 */
+static lv_obj_t *kb;                 /* 虚拟键盘 */
+static volatile int chat_pending = 0;/* 1=等待 AI 回复 */
+
+/* ---- 拼音输入法候选栏 ---- */
+#define IME_MAX_CAND 8                  /* 候选栏最多显示的候选字数 */
+static lv_obj_t *ime_bar;               /* 候选栏容器 */
+static lv_obj_t *ime_btns[IME_MAX_CAND];  /* 候选字按钮 */
+static lv_obj_t *ime_lbls[IME_MAX_CAND];  /* 候选字标签 */
+static char ime_cand[IME_MAX_CAND][4];    /* 候选字 UTF-8（3 字节 + \0） */
+static int  ime_cand_plen[IME_MAX_CAND];  /* 候选字来源拼音组的拼音长度 */
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-
+#define AI_URL "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"
+#define AI_KEY "sk-ws-H.EPLHEIP.hWXu.MEYCIQDytiueAUS-gKpkG1X7QQ9DxoDTPCFth471SALe1gZnjgIhAJFrKg4RZ9edeHxWVbypeJmRSSaAmhASte47U3XpsJ0R"
+#define AI_MODEL "qwen3.8-max"
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -80,14 +109,14 @@ const osThreadAttr_t defaultTask_attributes = {
 osThreadId_t lvglTaskHandle;
 const osThreadAttr_t lvglTask_attributes = {
   .name = "lvglTask",
-  .stack_size = 2048 * 4,
+  .stack_size = 4096 * 4,
   .priority = (osPriority_t) osPriorityAboveNormal,
 };
 /* Definitions for esp8266Task */
 osThreadId_t esp8266TaskHandle;
 const osThreadAttr_t esp8266Task_attributes = {
   .name = "esp8266Task",
-  .stack_size = 1024 * 4,
+  .stack_size = 2048 * 4,
   .priority = (osPriority_t) osPriorityNormal,
 };
 /* Definitions for esp_rx_queue */
@@ -100,6 +129,11 @@ osMessageQueueId_t esp_ai_queueHandle;
 const osMessageQueueAttr_t esp_ai_queue_attributes = {
   .name = "esp_ai_queue"
 };
+/* Definitions for esp_ai_req_queue */
+osMessageQueueId_t esp_ai_req_queueHandle;
+const osMessageQueueAttr_t esp_ai_req_queue_attributes = {
+  .name = "esp_ai_req_queue"
+};
 
 /* Private function prototypes -----------------------------------------------*/
 /* USER CODE BEGIN FunctionPrototypes */
@@ -107,15 +141,28 @@ static void create_main_ui(void);
 static void create_robot_face(void);
 static void create_status_ui(void);
 static void create_settings_ui(void);
+static void create_ai_ui(void);
 
 static lv_obj_t *idle_scr;
 static lv_obj_t *main_scr;
 static lv_obj_t *status_scr;
 static lv_obj_t *settings_scr;
-static lv_obj_t *status_list;
+static lv_obj_t *ai_scr;
+static lv_obj_t *status_info_label;   /* 系统状态页面的信息标签 */
 static void esp_log(const char *text);
 static void esp_log_ai(const char *text);
 static void extract_content(const char *resp, char *out, int out_sz);
+
+static void chat_add_message(const char *role, const char *content);
+static void chat_send_to_ai(const char *user_msg);
+static void chat_build_json(char *json, int json_sz);
+static void chat_ui_update(void);
+static void chat_send_handler(lv_event_t *e);
+static void kb_toggle_handler(lv_event_t *e);
+static void ime_update_candidates(void);
+static void ime_commit(const char *cand, int pinyin_len);
+static void ime_cand_handler(lv_event_t *e);
+static void ime_value_changed_handler(lv_event_t *e);
 
 /* USER CODE END FunctionPrototypes */
 
@@ -153,6 +200,9 @@ void MX_FREERTOS_Init(void) {
 
   /* creation of esp_ai_queue */
   esp_ai_queueHandle = osMessageQueueNew (1, 512, &esp_ai_queue_attributes);
+
+  /* creation of esp_ai_req_queue */
+  esp_ai_req_queueHandle = osMessageQueueNew (1, 256, &esp_ai_req_queue_attributes);
 
   /* USER CODE BEGIN RTOS_QUEUES */
   /* add queues, ... */
@@ -207,7 +257,6 @@ void StartDefaultTask(void *argument)
 void lvglStartTask(void *argument)
 {
   /* USER CODE BEGIN lvglStartTask */
-    static char ai_msg[512];
     lv_init();
     lv_port_disp_init();
     lv_port_indev_init();
@@ -215,50 +264,33 @@ void lvglStartTask(void *argument)
     create_robot_face();
     create_status_ui();
     create_settings_ui();
+    create_ai_ui();
     create_main_ui();
     
-    lv_scr_load(status_scr);
+    lv_scr_load(idle_scr);
 
-    esp_msg_t msg;
-    static int ai_reply_countdown = 0;
+    esp_msg_t m;
+    char status_buf[512] = "";
+    int status_line = 0;
+    char ai_buf[512];
 
     for (;;) {
-        if (osMessageQueueGet(esp_rx_queueHandle, &msg, NULL, 0) == osOK) {
-            char display_text[64];
-            
-            switch (msg.type) {
-                case ESP_MSG_INIT:
-                    lv_list_add_text(status_list, "[OK] System Ready");
-                    break;
-                case ESP_MSG_AT_OK:
-                    lv_list_add_text(status_list, "[OK] ESP8266 Connected");
-                    break;
-                case ESP_MSG_AT_FAIL:
-                    snprintf(display_text, sizeof(display_text), "[ERR] AT Error: %s", msg.text);
-                    lv_list_add_btn(status_list, NULL, display_text);
-                    break;
-                case ESP_MSG_WIFI_OK:
-                    lv_list_add_text(status_list, "[OK] WiFi Connected");
-                    lv_list_add_text(status_list, msg.text);
-                    break;
-                case ESP_MSG_WIFI_FAIL:
-                    snprintf(display_text, sizeof(display_text), "[ERR] WiFi Failed: %s", msg.text);
-                    lv_list_add_btn(status_list, NULL, display_text);
-                    break;
-                case 10:
-                    lv_list_add_btn(status_list, NULL, msg.text);
-                    break;
+        /* 读取 ESP8266 状态消息并更新状态页面 */
+        while (osMessageQueueGet(esp_rx_queueHandle, &m, NULL, 0) == osOK) {
+            if (status_line > 0) {
+                strncat(status_buf, "\n", sizeof(status_buf) - strlen(status_buf) - 1);
+            }
+            strncat(status_buf, m.text, sizeof(status_buf) - strlen(status_buf) - 1);
+            status_line++;
+            if (status_info_label != NULL) {
+                lv_label_set_text(status_info_label, status_buf);
             }
         }
-        if (osMessageQueueGet(esp_ai_queueHandle, ai_msg, NULL, 0) == osOK) {
-            if (ai_text) lv_textarea_set_text(ai_text, ai_msg);
-            ai_reply_countdown = 400;
-        }
-        if (ai_reply_countdown > 0) {
-            ai_reply_countdown--;
-            if (ai_reply_countdown == 0) {
-                lv_scr_load(idle_scr);
-            }
+
+        /* 读取 AI 回复并追加到对话 */
+        if (osMessageQueueGet(esp_ai_queueHandle, ai_buf, NULL, 0) == osOK) {
+            chat_add_message("assistant", ai_buf);
+            chat_pending = 0;
         }
 
         lv_timer_handler();
@@ -278,56 +310,58 @@ void esp8266StartTask(void *argument)
 {
   /* USER CODE BEGIN esp8266StartTask */
     esp_status_t status;
-    char json[256];
+    char req[256];
+    static char json[8192];
 
-#define AI_URL "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"
-#define AI_KEY "sk-ws-H.EPLHEIP.hWXu.MEYCIQDytiueAUS-gKpkG1X7QQ9DxoDTPCFth471SALe1gZnjgIhAJFrKg4RZ9edeHxWVbypeJmRSSaAmhASte47U3XpsJ0R"
-#define AI_MODEL "qwen3.8-max"
-#define AI_PROMPT "\xE4\xBD\xA0\xE5\xA5\xBD\xEF\xBC\x8C\xE8\xAF\xB7\xE7\x94\xA8\xE4\xB8\x80\xE5\x8F\xA5\xE8\xAF\x9D\xE4\xBB\x8B\xE7\xBB\x8D\xE4\xBD\xA0\xE8\x87\xAA\xE5\xB7\xB1\xE3\x80\x82"
-
+    esp_log("\xE6\xAD\xA3\xE5\x9C\xA8\xE5\x88\x9D\xE5\xA7\x8B\xE5\x8C\x96ESP8266..."); /* 正在初始化ESP8266... */
     ESP_Init();
-    esp_log("ESP Init");
     osDelay(2000);
 
-    /* AT self-check */
     status = ESP_SendCmd("AT\r\n", "OK", 2000);
-    if (status != ESP_OK) {
-        esp_log("AT fail");
-        for (;;) osDelay(1000);
-    }
-
-    /* connect WiFi */
-    status = ESP_ConnectAP("HUAWEI-1FKZ9T", "FSNH82502");
-    if (status != ESP_OK) {
-        esp_log("WiFi fail");
-        for (;;) osDelay(1000);
-    }
-    esp_log("WiFi OK");
-
-    /* build request body */
-    snprintf(json, sizeof(json),
-        "{\"model\":\"%s\",\"messages\":[{\"role\":\"user\",\"content\":\"%s\"}]}",
-        AI_MODEL, AI_PROMPT);
-
-    esp_log("POST to Qwen...");
-    status = ESP_HTTPPostAuth(AI_URL, json, AI_KEY, http_resp, (uint16_t)sizeof(http_resp));
-
     if (status == ESP_OK) {
-        esp_log("HTTP OK, answer:");
-        extract_content(http_resp, json, (int)sizeof(json));
-        if (json[0] != '\0') {
-            esp_log_ai(json);
-        } else {
-            esp_log("(no content)");
-        }
+        esp_log("AT\xE9\x80\x9A\xE8\xAE\xAF\xE6\xAD\xA3\xE5\xB8\xB8"); /* AT通讯正常 */
     } else {
-        char b[32];
-        snprintf(b, sizeof(b), "HTTP fail %d", (int)status);
-        esp_log(b);
+        esp_log("AT\xE9\x80\x9A\xE8\xAE\xAF\xE5\xA4\xB1\xE8\xB4\xA5"); /* AT通讯失败 */
+        for (;;) osDelay(1000);
     }
+
+    esp_log("\xE6\xAD\xA3\xE5\x9C\xA8\xE8\xBF\x9E\xE6\x8E\xA5WiFi..."); /* 正在连接WiFi... */
+    status = ESP_ConnectAP("HUAWEI-1FKZ9T", "FSNH82502");
+    if (status == ESP_OK) {
+        esp_log("WiFi\xE8\xBF\x9E\xE6\x8E\xA5\xE6\x88\x90\xE5\x8A\x9F"); /* WiFi连接成功 */
+    } else {
+        esp_log("WiFi\xE8\xBF\x9E\xE6\x8E\xA5\xE5\xA4\xB1\xE8\xB4\xA5"); /* WiFi连接失败 */
+        for (;;) osDelay(1000);
+    }
+
+    esp_log("\xE7\xB3\xBB\xE7\xBB\x9F\xE5\xB0\xB1\xE7\xBB\xAA"); /* 系统就绪 */
 
     for (;;) {
-        osDelay(1000);
+        /* 等待 lvglTask 发来的对话请求 */
+        if (osMessageQueueGet(esp_ai_req_queueHandle, req, NULL, osWaitForever) == osOK) {
+            chat_build_json(json, (int)sizeof(json));
+
+            esp_log("POST to Qwen...");
+            status = ESP_HTTPPostAuth(AI_URL, json, AI_KEY, http_resp, (uint16_t)sizeof(http_resp));
+
+            if (status == ESP_OK) {
+                extract_content(http_resp, json, (int)sizeof(json));
+                if (json[0] != '\0') {
+                    esp_log_ai(json);
+                } else {
+                    /* 解析不到 content：把服务器原始响应打出来（优先显示响应体，跳过 HTTP 头） */
+                    char dump[CHAT_MSG_LEN];
+                    const char *body = strstr(http_resp, "\r\n\r\n");
+                    snprintf(dump, sizeof(dump), "[\xE6\x97\xA0\xE5\x86\x85\xE5\xAE\xB9] %.200s",
+                             body ? body + 4 : http_resp);
+                    esp_log_ai(dump);
+                }
+            } else {
+                char b[32];
+                snprintf(b, sizeof(b), "[\xE9\x94\x99\xE8\xAF\xAF %d]", (int)status); /* [错误 N] */
+                esp_log_ai(b);
+            }
+        }
     }
   /* USER CODE END esp8266StartTask */
 }
@@ -403,6 +437,155 @@ static void main_to_settings_handler(lv_event_t *e)
     lv_scr_load(settings_scr);
 }
 
+static void main_to_ai_handler(lv_event_t *e)
+{
+    lv_scr_load(ai_scr);
+}
+
+static void chat_send_handler(lv_event_t *e)
+{
+    if (chat_pending) return;
+
+    const char *msg = lv_textarea_get_text(chat_input);
+    if (msg[0] == '\0') return;
+
+    chat_send_to_ai(msg);
+    lv_textarea_set_text(chat_input, "");
+}
+
+static void kb_toggle_handler(lv_event_t *e)
+{
+    if (lv_obj_has_flag(kb, LV_OBJ_FLAG_HIDDEN)) {
+        lv_obj_clear_flag(kb, LV_OBJ_FLAG_HIDDEN);
+        lv_keyboard_set_textarea(kb, chat_input);
+        /* 键盘此时已布局完成，把候选栏贴到键盘上方并刷新 */
+        lv_obj_align_to(ime_bar, kb, LV_ALIGN_OUT_TOP_MID, 0, 0);
+        ime_update_candidates();
+    } else {
+        lv_obj_add_flag(kb, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_add_flag(ime_bar, LV_OBJ_FLAG_HIDDEN);
+    }
+}
+
+/* ===== 拼音输入法候选栏 ===== */
+
+/* 返回 textarea 末尾连续拼音串（a-z 或 v）的起始字节偏移；无则返回字符串长度 */
+static int ime_run_offset(const char *text)
+{
+    int len = (int)strlen(text);
+    int start = len;
+    while (start > 0) {
+        char c = text[start - 1];
+        if ((c >= 'a' && c <= 'z') || c == 'v') start--;
+        else break;
+    }
+    return start;
+}
+
+/* 找到 run 中最长、且有候选字的拼音前缀长度（即当前应显示的"音节"） */
+static int ime_active_pylen(const char *run, int runlen)
+{
+    for (int L = runlen; L >= 1; L--) {
+        for (int g = 0; g < (int)PY_GROUP_COUNT; g++) {
+            if (strncmp(py_groups[g].py, run, L) == 0) return L;
+        }
+    }
+    return 0;
+}
+
+/* 读取输入框，刷新候选栏 */
+static void ime_update_candidates(void)
+{
+    const char *text = lv_textarea_get_text(chat_input);
+    int len = (int)strlen(text);
+    int start = ime_run_offset(text);
+    int runlen = len - start;
+
+    if (runlen <= 0) {
+        lv_obj_add_flag(ime_bar, LV_OBJ_FLAG_HIDDEN);
+        return;
+    }
+
+    char run[32];
+    if (runlen > (int)sizeof(run) - 1) runlen = (int)sizeof(run) - 1;
+    memcpy(run, text + start, runlen);
+    run[runlen] = '\0';
+
+    int L = ime_active_pylen(run, runlen);
+    if (L <= 0) {
+        lv_obj_add_flag(ime_bar, LV_OBJ_FLAG_HIDDEN);
+        return;
+    }
+
+    /* 收集所有以 run 前 L 个字母开头的拼音组里的候选字 */
+    int cand_count = 0;
+    for (int g = 0; g < (int)PY_GROUP_COUNT && cand_count < IME_MAX_CAND; g++) {
+        if (strncmp(py_groups[g].py, run, L) == 0) {
+            int plen = (int)strlen(py_groups[g].py);
+            const char *chs = py_groups[g].chs;
+            while (*chs && cand_count < IME_MAX_CAND) {
+                memcpy(ime_cand[cand_count], chs, 3);   /* 每个汉字固定 3 字节 UTF-8 */
+                ime_cand[cand_count][3] = '\0';
+                ime_cand_plen[cand_count] = plen;
+                cand_count++;
+                chs += 3;
+            }
+        }
+    }
+
+    for (int i = 0; i < IME_MAX_CAND; i++) {
+        if (i < cand_count) {
+            lv_label_set_text(ime_lbls[i], ime_cand[i]);
+            lv_obj_clear_flag(ime_btns[i], LV_OBJ_FLAG_HIDDEN);
+        } else {
+            lv_obj_add_flag(ime_btns[i], LV_OBJ_FLAG_HIDDEN);
+        }
+    }
+    lv_obj_clear_flag(ime_bar, LV_OBJ_FLAG_HIDDEN);
+}
+
+/* 把候选字提交进输入框：替换末尾拼音串的前 pinyin_len 个字母，保留剩余字母 */
+static void ime_commit(const char *cand, int pinyin_len)
+{
+    const char *text = lv_textarea_get_text(chat_input);
+    int len = (int)strlen(text);
+    int start = ime_run_offset(text);
+    int runlen = len - start;
+    int k = pinyin_len;
+    if (k > runlen) k = runlen;   /* 提前点选时吞掉整个已输入 run */
+
+    char buf[512];
+    int w = snprintf(buf, sizeof(buf), "%.*s%s%.*s",
+                     start, text,
+                     cand,
+                     len - (start + k), text + start + k);
+    if (w > 0 && w < (int)sizeof(buf)) {
+        lv_textarea_set_text(chat_input, buf);
+        /* set_text 会触发 VALUE_CHANGED -> ime_update_candidates，无需手动刷新 */
+    }
+}
+
+/* 候选字按钮点击 */
+static void ime_cand_handler(lv_event_t *e)
+{
+    lv_obj_t *t = lv_event_get_target(e);
+    for (int i = 0; i < IME_MAX_CAND; i++) {
+        if (ime_btns[i] == t) {
+            if (ime_cand[i][0] != '\0') {
+                ime_commit(ime_cand[i], ime_cand_plen[i]);
+            }
+            break;
+        }
+    }
+}
+
+/* 输入框内容变化时刷新候选栏 */
+static void ime_value_changed_handler(lv_event_t *e)
+{
+    (void)e;
+    ime_update_candidates();
+}
+
 
 
 /**
@@ -417,53 +600,70 @@ static void create_main_ui(void)
 {
     /* 创建空白屏幕，深色背景 (#1a1a2e) */
     main_scr = lv_obj_create(NULL);
-    lv_obj_set_style_bg_color(main_scr, lv_color_hex(0x1a1a2e), 0);
+    lv_obj_set_style_bg_color(main_scr, lv_color_hex(0x0a0a0a), 0);
 
     /* 顶部标题: "菜单" */
     lv_obj_t *title = lv_label_create(main_scr);
     lv_label_set_text(title, "\xE8\x8F\x9C\xE5\x8D\x95"); /* 菜单 */
     lv_obj_set_style_text_font(title, &lv_font_cjk16, 0);
-    lv_obj_set_style_text_color(title, lv_color_white(), 0);
+    lv_obj_set_style_text_color(title, lv_color_hex(0x00ff41), 0);
     lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 15);
 
-    /* 按钮1: "表情", 100x75, 左上位置, 深紫色 (#2d2d5e) */
+    /* 按钮1: "表情", 100x75, 左上位置, 暗绿底 (#0d2818) + 绿色边框 */
     lv_obj_t *btn1 = lv_btn_create(main_scr);
     lv_obj_set_size(btn1, 100, 75);
-    lv_obj_align(btn1, LV_ALIGN_CENTER, -65, -40);
-    lv_obj_set_style_bg_color(btn1, lv_color_hex(0x2d2d5e), 0);
+    lv_obj_align(btn1, LV_ALIGN_CENTER, -55, -40);
+    lv_obj_set_style_bg_color(btn1, lv_color_hex(0x0d2818), 0);
+    lv_obj_set_style_border_width(btn1, 0, 0);
     lv_obj_set_style_radius(btn1, 12, 0);
     lv_obj_t *lbl1 = lv_label_create(btn1);
     lv_label_set_text(lbl1, "\xE8\xA1\xA8\xE6\x83\x85"); /* 表情 */
     lv_obj_set_style_text_font(lbl1, &lv_font_cjk16, 0);
-    lv_obj_set_style_text_color(lbl1, lv_color_white(), 0);
+    lv_obj_set_style_text_color(lbl1, lv_color_hex(0x00ff41), 0);
     lv_obj_center(lbl1);
     lv_obj_add_event_cb(btn1, main_to_idle_handler, LV_EVENT_CLICKED, NULL);
 
-    /* 按钮2: "状态", 100x75, 右上位置, 深紫色 (#2d2d5e) */
+    /* 按钮2: "状态", 100x75, 右上位置, 暗绿底 (#0d2818) + 绿色边框 */
     lv_obj_t *btn2 = lv_btn_create(main_scr);
     lv_obj_set_size(btn2, 100, 75);
-    lv_obj_align(btn2, LV_ALIGN_CENTER, 65, -40);
-    lv_obj_set_style_bg_color(btn2, lv_color_hex(0x2d2d5e), 0);
+    lv_obj_align(btn2, LV_ALIGN_CENTER, 55, -40);
+    lv_obj_set_style_bg_color(btn2, lv_color_hex(0x0d2818), 0);
+    lv_obj_set_style_border_width(btn2, 0, 0);
     lv_obj_set_style_radius(btn2, 12, 0);
     lv_obj_t *lbl2 = lv_label_create(btn2);
     lv_label_set_text(lbl2, "\xE7\x8A\xB6\xE6\x80\x81"); /* 状态 */
     lv_obj_set_style_text_font(lbl2, &lv_font_cjk16, 0);
-    lv_obj_set_style_text_color(lbl2, lv_color_white(), 0);
+    lv_obj_set_style_text_color(lbl2, lv_color_hex(0x00ff41), 0);
     lv_obj_center(lbl2);
     lv_obj_add_event_cb(btn2, main_to_status_handler, LV_EVENT_CLICKED, NULL);
 
-    /* 按钮3: "设置", 100x75, 左下位置, 深紫色 (#2d2d5e) */
+    /* 按钮3: "AI对话", 100x75, 左下位置, 暗绿底 (#0d2818) + 绿色边框 */
     lv_obj_t *btn3 = lv_btn_create(main_scr);
     lv_obj_set_size(btn3, 100, 75);
-    lv_obj_align(btn3, LV_ALIGN_CENTER, -65, 55);
-    lv_obj_set_style_bg_color(btn3, lv_color_hex(0x2d2d5e), 0);
+    lv_obj_align(btn3, LV_ALIGN_CENTER, -55, 55);
+    lv_obj_set_style_bg_color(btn3, lv_color_hex(0x0d2818), 0);
+    lv_obj_set_style_border_width(btn3, 0, 0);
     lv_obj_set_style_radius(btn3, 12, 0);
     lv_obj_t *lbl3 = lv_label_create(btn3);
-    lv_label_set_text(lbl3, "\xE8\xAE\xBE\xE7\xBD\xAE"); /* 设置 */
+    lv_label_set_text(lbl3, "AI\xE5\xAF\xB9\xE8\xAF\x9D"); /* AI对话 */
     lv_obj_set_style_text_font(lbl3, &lv_font_cjk16, 0);
-    lv_obj_set_style_text_color(lbl3, lv_color_white(), 0);
+    lv_obj_set_style_text_color(lbl3, lv_color_hex(0x00ff41), 0);
     lv_obj_center(lbl3);
-    lv_obj_add_event_cb(btn3, main_to_settings_handler, LV_EVENT_CLICKED, NULL);
+    lv_obj_add_event_cb(btn3, main_to_ai_handler, LV_EVENT_CLICKED, NULL);
+
+    /* 按钮4: "设置", 100x75, 右下位置, 暗绿底 (#0d2818) + 绿色边框 */
+    lv_obj_t *btn4 = lv_btn_create(main_scr);
+    lv_obj_set_size(btn4, 100, 75);
+    lv_obj_align(btn4, LV_ALIGN_CENTER, 55, 55);
+    lv_obj_set_style_bg_color(btn4, lv_color_hex(0x0d2818), 0);
+    lv_obj_set_style_border_width(btn4, 0, 0);
+    lv_obj_set_style_radius(btn4, 12, 0);
+    lv_obj_t *lbl4 = lv_label_create(btn4);
+    lv_label_set_text(lbl4, "\xE8\xAE\xBE\xE7\xBD\xAE"); /* 设置 */
+    lv_obj_set_style_text_font(lbl4, &lv_font_cjk16, 0);
+    lv_obj_set_style_text_color(lbl4, lv_color_hex(0x00ff41), 0);
+    lv_obj_center(lbl4);
+    lv_obj_add_event_cb(btn4, main_to_settings_handler, LV_EVENT_CLICKED, NULL);
 
 }
 
@@ -476,46 +676,35 @@ static void create_main_ui(void)
  */
 static void create_status_ui(void)
 {
-    /* 创建空白屏幕作为容器 */
     status_scr = lv_obj_create(NULL);
-    
-    /* 返回按钮: 60x30, 左上角 */
+    lv_obj_set_style_bg_color(status_scr, lv_color_hex(0x0a0a0a), 0);
+
+    /* 返回按钮 */
     lv_obj_t *back_btn = lv_btn_create(status_scr);
     lv_obj_set_size(back_btn, 60, 30);
     lv_obj_align(back_btn, LV_ALIGN_TOP_LEFT, 5, 5);
+    lv_obj_set_style_bg_color(back_btn, lv_color_hex(0x0d2818), 0);
+    lv_obj_set_style_border_width(back_btn, 0, 0);
     lv_obj_t *back_label = lv_label_create(back_btn);
-    lv_label_set_text(back_label, "\xE8\x8F\x9C\xE5\x8D\x95"); /* ← */
+    lv_label_set_text(back_label, "\xE8\xBF\x94\xE5\x9B\x9E"); /* 返回 */
     lv_obj_set_style_text_font(back_label, &lv_font_cjk16, 0);
+    lv_obj_set_style_text_color(back_label, lv_color_hex(0x00ff41), 0);
     lv_obj_center(back_label);
     lv_obj_add_event_cb(back_btn, back_click_handler, LV_EVENT_CLICKED, NULL);
 
-    /* 顶部标题: "系统状态" */
+    /* 标题 */
     lv_obj_t *title = lv_label_create(status_scr);
     lv_label_set_text(title, "\xE7\xB3\xBB\xE7\xBB\x9F\xE7\x8A\xB6\xE6\x80\x81"); /* 系统状态 */
     lv_obj_set_style_text_font(title, &lv_font_cjk16, 0);
+    lv_obj_set_style_text_color(title, lv_color_hex(0x00ff41), 0);
     lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 10);
 
-    /* 状态列表: 230x180, 居中靠上 */
-    status_list = lv_list_create(status_scr);
-    lv_obj_set_size(status_list, 230, 180);
-    lv_obj_align(status_list, LV_ALIGN_TOP_MID, 0, 45);
-
-    /* 初始化占位项，提示用户系统正在启动 */
-    lv_obj_t *init_item = lv_list_add_text(status_list, "--- \xE5\x88\x9D\xE5\xA7\x8B\xE5\x8C\x96\xE4\xB8\xAD..."); /* --- 初始化中... */
-    lv_obj_set_style_text_font(init_item, &lv_font_cjk16, 0);
-
-    /* 底部AI输出文本区域: 220x140, 白色背景, 灰色边框 */
-    ai_text = lv_textarea_create(status_scr);
-    lv_textarea_set_text(ai_text, "");
-    lv_obj_set_size(ai_text, 220, 140);
-    lv_obj_align(ai_text, LV_ALIGN_BOTTOM_MID, 0, -10);
-    lv_obj_set_style_text_font(ai_text, &lv_font_cjk16, 0);
-    lv_obj_set_style_bg_color(ai_text, lv_color_white(), 0);
-    lv_obj_set_style_border_width(ai_text, 1, 0);
-    lv_obj_set_style_border_color(ai_text, lv_color_hex(0x404040), 0);
-    lv_textarea_set_cursor_click_pos(ai_text, false);      /* 禁止点击定位光标 */
-    lv_textarea_set_max_length(ai_text, 512);               /* 限制最大512字符 */
-    lv_obj_add_flag(ai_text, LV_OBJ_FLAG_SCROLLABLE);       /* 启用滚动 */
+    /* 状态信息标签: 显示 ESP8266 初始化等实时状态 */
+    status_info_label = lv_label_create(status_scr);
+    lv_label_set_text(status_info_label, "\xE7\xAD\x89\xE5\xBE\x85\xE5\x88\x9D\xE5\xA7\x8B\xE5\x8C\x96..."); /* 等待初始化... */
+    lv_obj_set_style_text_font(status_info_label, &lv_font_cjk16, 0);
+    lv_obj_set_style_text_color(status_info_label, lv_color_hex(0x00ff41), 0);
+    lv_obj_align(status_info_label, LV_ALIGN_CENTER, 0, -20);
 }
 
 /**
@@ -534,7 +723,7 @@ static void create_robot_face(void)
     /* 左眼: 青色圆形, 36x36, 位置偏左上 */
     lv_obj_t *eye_left = lv_obj_create(idle_scr);
     lv_obj_set_size(eye_left, 36, 36);
-    lv_obj_set_style_bg_color(eye_left, lv_palette_main(LV_PALETTE_CYAN), 0);
+    lv_obj_set_style_bg_color(eye_left, lv_color_hex(0x00ff41), 0);
     lv_obj_set_style_radius(eye_left, LV_RADIUS_CIRCLE, 0);
     lv_obj_set_style_border_width(eye_left, 0, 0);
     lv_obj_align(eye_left, LV_ALIGN_CENTER, -50, -40);
@@ -542,7 +731,7 @@ static void create_robot_face(void)
     /* 右眼: 青色圆形, 36x36, 位置偏右上 */
     lv_obj_t *eye_right = lv_obj_create(idle_scr);
     lv_obj_set_size(eye_right, 36, 36);
-    lv_obj_set_style_bg_color(eye_right, lv_palette_main(LV_PALETTE_CYAN), 0);
+    lv_obj_set_style_bg_color(eye_right, lv_color_hex(0x00ff41), 0);
     lv_obj_set_style_radius(eye_right, LV_RADIUS_CIRCLE, 0);
     lv_obj_set_style_border_width(eye_right, 0, 0);
     lv_obj_align(eye_right, LV_ALIGN_CENTER, 50, -40);
@@ -566,7 +755,7 @@ static void create_robot_face(void)
     /* 嘴巴: 青色圆角矩形, 80x20, 居中偏下 */
     lv_obj_t *mouth = lv_obj_create(idle_scr);
     lv_obj_set_size(mouth, 80, 20);
-    lv_obj_set_style_bg_color(mouth, lv_palette_main(LV_PALETTE_CYAN), 0);
+    lv_obj_set_style_bg_color(mouth, lv_color_hex(0x00ff41), 0);
     lv_obj_set_style_radius(mouth, 10, 0);
     lv_obj_set_style_border_width(mouth, 0, 0);
     lv_obj_align(mouth, LV_ALIGN_CENTER, 0, 30);
@@ -592,11 +781,13 @@ static void create_settings_ui(void)
 {
     /* 创建空白屏幕作为容器 */
     settings_scr = lv_obj_create(NULL);
+    lv_obj_set_style_bg_color(settings_scr, lv_color_hex(0x0a0a0a), 0);
 
     /* 顶部标题: "设置" */
     lv_obj_t *title = lv_label_create(settings_scr);
     lv_label_set_text(title, "\xE8\xAE\xBE\xE7\xBD\xAE"); /* 设置 */
     lv_obj_set_style_text_font(title, &lv_font_cjk16, 0);
+    lv_obj_set_style_text_color(title, lv_color_hex(0x00ff41), 0);
     lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 10);
 
     /* 系统信息标签: 显示MCU型号、主频、LCD分辨率、RTOS框架 */
@@ -606,18 +797,239 @@ static void create_settings_ui(void)
                             "LCD: 320x240\n"
                             "FreeRTOS + LVGL");
     lv_obj_set_style_text_font(info, &lv_font_cjk16, 0);
+    lv_obj_set_style_text_color(info, lv_color_hex(0x00ff41), 0);
     lv_obj_align(info, LV_ALIGN_CENTER, 0, -20);
 
     /* 返回按钮: 100x40, 底部居中, 点击返回主菜单 */
     lv_obj_t *back_btn = lv_btn_create(settings_scr);
     lv_obj_set_size(back_btn, 100, 40);
     lv_obj_align(back_btn, LV_ALIGN_BOTTOM_MID, 0, -20);
+    lv_obj_set_style_bg_color(back_btn, lv_color_hex(0x0d2818), 0);
+    lv_obj_set_style_border_width(back_btn, 0, 0);
     lv_obj_t *back_label = lv_label_create(back_btn);
     lv_label_set_text(back_label, "\xE8\xBF\x94\xE5\x9B\x9E"); /* 返回 */
     lv_obj_set_style_text_font(back_label, &lv_font_cjk16, 0);
+    lv_obj_set_style_text_color(back_label, lv_color_hex(0x00ff41), 0);
     lv_obj_center(back_label);
     /* 绑定返回事件: 点击触发 back_click_handler 回到主菜单 */
     lv_obj_add_event_cb(back_btn, back_click_handler, LV_EVENT_CLICKED, NULL);
+}
+
+/**
+ * @brief  创建AI对话页面UI
+ * @note   提供输入框+折叠键盘+对话气泡列表
+ *         - 顶部: 返回按钮 + "AI对话" 标题
+ *         - 输入区: 输入框 + 键盘开关 + 发送按钮
+ *         - 中部: 对话消息列表
+ *         - 底部: 虚拟键盘（默认折叠）
+ */
+static void create_ai_ui(void)
+{
+    ai_scr = lv_obj_create(NULL);
+    lv_obj_set_style_bg_color(ai_scr, lv_color_hex(0x0a0a0a), 0);
+
+    /* 返回按钮 */
+    lv_obj_t *back_btn = lv_btn_create(ai_scr);
+    lv_obj_set_size(back_btn, 60, 30);
+    lv_obj_align(back_btn, LV_ALIGN_TOP_LEFT, 5, 5);
+    lv_obj_set_style_bg_color(back_btn, lv_color_hex(0x0d2818), 0);
+    lv_obj_set_style_border_width(back_btn, 0, 0);
+    lv_obj_t *back_label = lv_label_create(back_btn);
+    lv_label_set_text(back_label, "\xE8\xBF\x94\xE5\x9B\x9E"); /* 返回 */
+    lv_obj_set_style_text_font(back_label, &lv_font_cjk16, 0);
+    lv_obj_set_style_text_color(back_label, lv_color_hex(0x00ff41), 0);
+    lv_obj_center(back_label);
+    lv_obj_add_event_cb(back_btn, back_click_handler, LV_EVENT_CLICKED, NULL);
+
+    /* 标题 */
+    lv_obj_t *title = lv_label_create(ai_scr);
+    lv_label_set_text(title, "AI \xE5\xAF\xB9\xE8\xAF\x9D"); /* AI 对话 */
+    lv_obj_set_style_text_font(title, &lv_font_cjk16, 0);
+    lv_obj_set_style_text_color(title, lv_color_hex(0x00ff41), 0);
+    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 10);
+
+    /* 输入框 + 发送按钮 + 键盘开关 */
+    chat_input = lv_textarea_create(ai_scr);
+    lv_obj_set_size(chat_input, 195, 36);
+    lv_obj_align(chat_input, LV_ALIGN_TOP_MID, -15, 41);
+    lv_obj_set_style_text_font(chat_input, &lv_font_cjk16, 0);
+    lv_textarea_set_max_length(chat_input, 128);
+    lv_textarea_set_placeholder_text(chat_input, "\xE8\xBE\x93\xE5\x85\xA5\xE6\xB6\x88\xE6\x81\xAF..."); /* 输入消息... */
+
+    chat_send_btn = lv_btn_create(ai_scr);
+    lv_obj_set_size(chat_send_btn, 42, 36);
+    lv_obj_align(chat_send_btn, LV_ALIGN_TOP_RIGHT, -5, 41);
+    lv_obj_set_style_bg_color(chat_send_btn, lv_color_hex(0x0d2818), 0);
+    lv_obj_set_style_border_width(chat_send_btn, 0, 0);
+    lv_obj_t *send_label = lv_label_create(chat_send_btn);
+    lv_label_set_text(send_label, "\xE5\x8F\x91\xE9\x80\x81"); /* 发送 */
+    lv_obj_set_style_text_font(send_label, &lv_font_cjk16, 0);
+    lv_obj_set_style_text_color(send_label, lv_color_hex(0x00ff41), 0);
+    lv_obj_center(send_label);
+    lv_obj_add_event_cb(chat_send_btn, chat_send_handler, LV_EVENT_CLICKED, NULL);
+
+    /* 键盘折叠按钮 */
+    lv_obj_t *kb_btn = lv_btn_create(ai_scr);
+    lv_obj_set_size(kb_btn, 42, 36);
+    lv_obj_align(kb_btn, LV_ALIGN_TOP_RIGHT, -50, 41);
+    lv_obj_set_style_bg_color(kb_btn, lv_color_hex(0x0d2818), 0);
+    lv_obj_set_style_border_width(kb_btn, 0, 0);
+    lv_obj_t *kb_label = lv_label_create(kb_btn);
+    lv_label_set_text(kb_label, "\xE9\x94\xAE\xE7\x9B\x98"); /* 键盘 */
+    lv_obj_set_style_text_font(kb_label, &lv_font_cjk16, 0);
+    lv_obj_set_style_text_color(kb_label, lv_color_hex(0x00ff41), 0);
+    lv_obj_center(kb_label);
+    lv_obj_add_event_cb(kb_btn, kb_toggle_handler, LV_EVENT_CLICKED, NULL);
+
+    /* 对话列表 */
+    chat_list = lv_list_create(ai_scr);
+    lv_obj_set_size(chat_list, 230, 120);
+    lv_obj_align(chat_list, LV_ALIGN_TOP_MID, 0, 85);
+    lv_obj_set_style_bg_color(chat_list, lv_color_hex(0x0d0d0d), 0);
+    lv_obj_set_style_border_width(chat_list, 0, 0);
+
+    /* 虚拟键盘: 最后创建=最上层，默认隐藏 */
+    kb = lv_keyboard_create(ai_scr);
+    lv_keyboard_set_textarea(kb, chat_input);
+    lv_obj_add_flag(kb, LV_OBJ_FLAG_HIDDEN);
+
+    /* 欢迎语：仅 UI 显示，不加入对话历史（避免以 assistant 开头发给 API 被拒） */
+    lv_obj_t *welcome_item = lv_list_add_text(chat_list, "AI: \xE4\xBD\xA0\xE5\xA5\xBD\xEF\xBC\x8C\xE6\x88\x91\xE6\x98\xAF AI \xE5\x8A\xA9\xE6\x89\x8B"); /* AI: 你好，我是 AI 助手 */
+    lv_obj_set_style_text_font(welcome_item, &lv_font_cjk16, 0);
+
+    /* ---- 拼音候选栏：透明容器 + 8 个候选字按钮，贴键盘上方，默认隐藏 ---- */
+    ime_bar = lv_obj_create(ai_scr);
+    lv_obj_set_size(ime_bar, 240, 40);
+    lv_obj_set_style_bg_opa(ime_bar, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(ime_bar, 0, 0);
+    lv_obj_set_style_pad_all(ime_bar, 0, 0);
+    lv_obj_align_to(ime_bar, kb, LV_ALIGN_OUT_TOP_MID, 0, 0);
+
+    int first_center = -(IME_MAX_CAND * 26 + (IME_MAX_CAND - 1) * 3) / 2 + 13;
+    for (int i = 0; i < IME_MAX_CAND; i++) {
+        ime_btns[i] = lv_btn_create(ime_bar);
+        lv_obj_set_size(ime_btns[i], 26, 34);
+        lv_obj_align(ime_btns[i], LV_ALIGN_CENTER, first_center + i * 29, 0);
+        lv_obj_set_style_bg_color(ime_btns[i], lv_color_hex(0x0d2818), 0);
+        lv_obj_set_style_radius(ime_btns[i], 6, 0);
+        lv_obj_set_style_border_width(ime_btns[i], 0, 0);
+        ime_lbls[i] = lv_label_create(ime_btns[i]);
+        lv_label_set_text(ime_lbls[i], "");
+        lv_obj_set_style_text_font(ime_lbls[i], &lv_font_cjk16, 0);
+        lv_obj_set_style_text_color(ime_lbls[i], lv_color_white(), 0);
+        lv_obj_center(ime_lbls[i]);
+        lv_obj_add_event_cb(ime_btns[i], ime_cand_handler, LV_EVENT_CLICKED, NULL);
+    }
+    lv_obj_add_flag(ime_bar, LV_OBJ_FLAG_HIDDEN);
+
+    /* 输入框内容变化 -> 刷新候选栏 */
+    lv_obj_add_event_cb(chat_input, ime_value_changed_handler, LV_EVENT_VALUE_CHANGED, NULL);
+}
+
+/* 添加一条消息到对话历史 */
+static void chat_add_message(const char *role, const char *content)
+{
+    if (chat_count >= CHAT_HISTORY_MAX) {
+        /* 移除最旧的一条，腾出空间 */
+        for (int i = 1; i < CHAT_HISTORY_MAX; i++) {
+            chat_history[i - 1] = chat_history[i];
+        }
+        chat_count = CHAT_HISTORY_MAX - 1;
+    }
+    snprintf(chat_history[chat_count].role, sizeof(chat_history[chat_count].role), "%s", role);
+    snprintf(chat_history[chat_count].content, sizeof(chat_history[chat_count].content), "%s", content);
+    chat_count++;
+    chat_ui_update();
+}
+
+/* 把字符串按 JSON 规则转义后追加到 dst（cap=总容量，pos=当前写位置，返回新位置） */
+static int json_append(char *dst, int cap, int pos, const char *s)
+{
+    static const char hex[] = "0123456789abcdef";
+    while (*s && pos < cap - 1) {
+        unsigned char c = (unsigned char)*s;
+        if (c == '"' || c == '\\') {
+            if (pos < cap - 2) { dst[pos++] = '\\'; dst[pos++] = (char)c; }
+        } else if (c == '\n') {
+            if (pos < cap - 2) { dst[pos++] = '\\'; dst[pos++] = 'n'; }
+        } else if (c == '\r') {
+            if (pos < cap - 2) { dst[pos++] = '\\'; dst[pos++] = 'r'; }
+        } else if (c == '\t') {
+            if (pos < cap - 2) { dst[pos++] = '\\'; dst[pos++] = 't'; }
+        } else if (c < 0x20) {
+            if (pos < cap - 6) {
+                dst[pos++] = '\\';
+                dst[pos++] = 'u';
+                dst[pos++] = '0';
+                dst[pos++] = '0';
+                dst[pos++] = hex[c >> 4];
+                dst[pos++] = hex[c & 0x0F];
+            }
+        } else {
+            dst[pos++] = (char)c;
+        }
+        s++;
+    }
+    dst[pos] = '\0';
+    return pos;
+}
+
+/* 构建 JSON 请求体，包含完整对话历史（只对 content 做 JSON 转义，结构用原始引号） */
+static void chat_build_json(char *json, int json_sz)
+{
+    int pos = snprintf(json, json_sz,
+        "{\"model\":\"%s\",\"messages\":[", AI_MODEL);
+    if (pos >= json_sz) pos = json_sz - 1;
+
+    for (int i = 0; i < chat_count; i++) {
+        if (pos >= json_sz - 1) break;
+        pos += snprintf(json + pos, json_sz - pos,
+            "{\"role\":\"%s\",\"content\":\"", chat_history[i].role);
+        if (pos >= json_sz) pos = json_sz - 1;
+
+        pos = json_append(json, json_sz, pos, chat_history[i].content);
+        if (pos >= json_sz - 1) break;
+
+        pos += snprintf(json + pos, json_sz - pos, "\"}%s",
+            (i < chat_count - 1) ? "," : "");
+        if (pos >= json_sz) pos = json_sz - 1;
+    }
+
+    if (pos < json_sz - 1) {
+        snprintf(json + pos, json_sz - pos, "]}");
+    }
+    json[json_sz - 1] = '\0';
+}
+
+/* 发送用户消息并等待 AI 回复 */
+static void chat_send_to_ai(const char *user_msg)
+{
+    chat_add_message("user", user_msg);
+    chat_pending = 1;
+
+    /* 把请求交给 esp8266Task 处理，避免阻塞 lvglTask（HTTP 需 10~60s） */
+    char req[256];
+    snprintf(req, sizeof(req), "%s", user_msg);
+    if (osMessageQueuePut(esp_ai_req_queueHandle, req, 0, 100) != osOK) {
+        chat_pending = 0;
+        chat_add_message("assistant", "(\xE7\xB3\xBB\xE7\xBB\x9F\xE5\xBF\x99\xE7\xA2\x8C)"); /* (系统忙碌) */
+    }
+}
+
+/* 刷新对话列表到 UI */
+static void chat_ui_update(void)
+{
+    lv_obj_clean(chat_list);
+    for (int i = 0; i < chat_count; i++) {
+        char disp[280];
+        if (strcmp(chat_history[i].role, "user") == 0) {
+            snprintf(disp, sizeof(disp), "\xE4\xBD\xA0: %s", chat_history[i].content); /* 你: */
+        } else {
+            snprintf(disp, sizeof(disp), "AI: %s", chat_history[i].content);
+        }
+        lv_obj_t *item = lv_list_add_text(chat_list, disp);
+        lv_obj_set_style_text_font(item, &lv_font_cjk16, 0);
+    }
 }
 
 /* USER CODE END Application */

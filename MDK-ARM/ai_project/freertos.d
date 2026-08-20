@@ -48,6 +48,7 @@ ai_project\freertos.o: ../Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_hal_uart.h
 ai_project\freertos.o: ../Middlewares/Third_Party/FreeRTOS/Source/CMSIS_RTOS_V2/cmsis_os.h
 ai_project\freertos.o: ../Middlewares/Third_Party/FreeRTOS/Source/CMSIS_RTOS_V2/cmsis_os2.h
 ai_project\freertos.o: D:\keil\ARM\ARMCC\Bin\..\include\stdio.h
+ai_project\freertos.o: D:\keil\ARM\ARMCC\Bin\..\include\string.h
 ai_project\freertos.o: ../HARDWARE/LCD/lcd.h
 ai_project\freertos.o: ../HARDWARE/sys.h
 ai_project\freertos.o: D:\keil\ARM\ARMCC\Bin\..\include\stdlib.h
@@ -66,7 +67,6 @@ ai_project\freertos.o: ../LVGL/src/../src/misc/../hal/lv_hal_tick.h
 ai_project\freertos.o: D:\keil\ARM\ARMCC\Bin\..\include\stdbool.h
 ai_project\freertos.o: ../LVGL/src/../src/misc/lv_math.h
 ai_project\freertos.o: ../LVGL/src/../src/misc/lv_mem.h
-ai_project\freertos.o: D:\keil\ARM\ARMCC\Bin\..\include\string.h
 ai_project\freertos.o: ../LVGL/src/../src/misc/lv_async.h
 ai_project\freertos.o: ../LVGL/src/../src/misc/lv_anim_timeline.h
 ai_project\freertos.o: ../LVGL/src/../src/misc/lv_anim.h
@@ -187,3 +187,4 @@ ai_project\freertos.o: ../HARDWARE/LVGL/lv_port_disp.h
 ai_project\freertos.o: ../HARDWARE/LVGL/lv_port_indev.h
 ai_project\freertos.o: ../HARDWARE/ESP8266/esp8266.h
 ai_project\freertos.o: ../Core/Inc/usart.h
+ai_project\freertos.o: ../Core/Inc/pinyin_data.h
