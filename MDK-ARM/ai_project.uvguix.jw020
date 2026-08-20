@@ -101,17 +101,17 @@
         <yPos>-1</yPos>
       </MaxPosition>
       <NormalPosition>
-        <Top>26</Top>
-        <Left>287</Left>
-        <Right>1209</Right>
-        <Bottom>935</Bottom>
+        <Top>32</Top>
+        <Left>390</Left>
+        <Right>1312</Right>
+        <Bottom>941</Bottom>
       </NormalPosition>
     </WindowPosition>
     <MDIClientArea>
       <RegID>0</RegID>
       <MDITabState>
-        <Len>857</Len>
-        <Data>01000000040000000100000001000000010000000100000000000000020000000000000001000000010000000000000028000000280000000100000009000000020000000100000024443A5C53544D50524F5C61695F70726F6A6563745C436F72655C5372635C6D61696E2E6300000000066D61696E2E6300000000C5D4F200FFFFFFFF20443A5C53544D50524F5C61695F70726F6A6563745C544558545C746578742E630000000006746578742E6300000000FFDC7800FFFFFFFF28443A5C53544D50524F5C61695F70726F6A6563745C436F72655C5372635C6672656572746F732E63000000000A6672656572746F732E6300000000BECEA100FFFFFFFF32443A5C53544D50524F5C61695F70726F6A6563745C4D444B2D41524D5C737461727475705F73746D33326634303778782E730000000015737461727475705F73746D33326634303778782E7300000000F0A0A100FFFFFFFF44443A5C53544D50524F5C61695F70726F6A6563745C4D6964646C6577617265735C54686972645F50617274795C4672656552544F535C536F757263655C7461736B732E6300000000077461736B732E6300000000BCA8E100FFFFFFFF2D443A5C53544D50524F5C61695F70726F6A6563745C4C56474C5C7372635C636F72655C6C765F6576656E742E68000000000A6C765F6576656E742E68000000009CC1B600FFFFFFFF3A443A5C53544D50524F5C61695F70726F6A6563745C48415244574152455C524F424F545F464143455C726F626F745F666163655F616E696D2E630000000011726F626F745F666163655F616E696D2E6300000000F7B88600FFFFFFFF30443A5C53544D50524F5C61695F70726F6A6563745C48415244574152455C5344494F5C7364696F5F7364636172642E63000000000D7364696F5F7364636172642E6300000000D9ADC200FFFFFFFF2F443A5C53544D50524F5C61695F70726F6A6563745C48415244574152455C4153525F50524F5C6173725F70726F2E6800000000096173725F70726F2E6800000000A5C2D700FFFFFFFF0100000010000000C5D4F200FFDC7800BECEA100F0A0A100BCA8E1009CC1B600F7B88600D9ADC200A5C2D700B3A6BE00EAD6A300F6FA7D00B5E99D005FC3CF00C1838300CACAD5000100000000000000020000003B01000066000000AB06000063020000</Data>
+        <Len>388</Len>
+        <Data>01000000040000000100000001000000010000000100000000000000020000000000000001000000010000000000000028000000280000000100000003000000010000000100000024443A5C53544D50524F5C61695F70726F6A6563745C436F72655C5372635C6D61696E2E6300000000066D61696E2E6300000000C5D4F200FFFFFFFF28443A5C53544D50524F5C61695F70726F6A6563745C436F72655C5372635C6672656572746F732E63000000000A6672656572746F732E6300000000FFDC7800FFFFFFFF32443A5C53544D50524F5C61695F70726F6A6563745C436F72655C496E635C73746D3332663478785F68616C5F636F6E662E68000000001473746D3332663478785F68616C5F636F6E662E6800000000BECEA100FFFFFFFF0100000010000000C5D4F200FFDC7800BECEA100F0A0A100BCA8E1009CC1B600F7B88600D9ADC200A5C2D700B3A6BE00EAD6A300F6FA7D00B5E99D005FC3CF00C1838300CACAD5000100000000000000020000003B01000066000000AB06000063020000</Data>
       </MDITabState>
     </MDIClientArea>
     <ViewEx>
@@ -3603,84 +3603,30 @@
     <ActiveMDIGroup>0</ActiveMDIGroup>
     <MDIGroup>
       <Size>100</Size>
-      <ActiveTab>2</ActiveTab>
+      <ActiveTab>1</ActiveTab>
       <Doc>
         <Name>../Core/Src/main.c</Name>
-        <ColumnNumber>0</ColumnNumber>
-        <TopLine>82</TopLine>
-        <CurrentLine>88</CurrentLine>
-        <Folding>1</Folding>
-        <ContractedFolders></ContractedFolders>
-        <PaneID>0</PaneID>
-      </Doc>
-      <Doc>
-        <Name>..\TEXT\text.c</Name>
-        <ColumnNumber>9</ColumnNumber>
-        <TopLine>110</TopLine>
-        <CurrentLine>136</CurrentLine>
+        <ColumnNumber>14</ColumnNumber>
+        <TopLine>157</TopLine>
+        <CurrentLine>188</CurrentLine>
         <Folding>1</Folding>
         <ContractedFolders></ContractedFolders>
         <PaneID>0</PaneID>
       </Doc>
       <Doc>
         <Name>../Core/Src/freertos.c</Name>
-        <ColumnNumber>31</ColumnNumber>
-        <TopLine>849</TopLine>
-        <CurrentLine>859</CurrentLine>
+        <ColumnNumber>51</ColumnNumber>
+        <TopLine>836</TopLine>
+        <CurrentLine>862</CurrentLine>
         <Folding>1</Folding>
         <ContractedFolders></ContractedFolders>
         <PaneID>0</PaneID>
       </Doc>
       <Doc>
-        <Name>startup_stm32f407xx.s</Name>
-        <ColumnNumber>0</ColumnNumber>
-        <TopLine>169</TopLine>
-        <CurrentLine>174</CurrentLine>
-        <Folding>1</Folding>
-        <ContractedFolders></ContractedFolders>
-        <PaneID>0</PaneID>
-      </Doc>
-      <Doc>
-        <Name>../Middlewares/Third_Party/FreeRTOS/Source/tasks.c</Name>
-        <ColumnNumber>0</ColumnNumber>
-        <TopLine>3632</TopLine>
-        <CurrentLine>3650</CurrentLine>
-        <Folding>1</Folding>
-        <ContractedFolders></ContractedFolders>
-        <PaneID>0</PaneID>
-      </Doc>
-      <Doc>
-        <Name>..\LVGL\src\extra\widgets\keyboard\../../../widgets/../core/lv_event.h</Name>
-        <ColumnNumber>0</ColumnNumber>
-        <TopLine>33</TopLine>
-        <CurrentLine>42</CurrentLine>
-        <Folding>1</Folding>
-        <ContractedFolders></ContractedFolders>
-        <PaneID>0</PaneID>
-      </Doc>
-      <Doc>
-        <Name>..\HARDWARE\ROBOT_FACE\robot_face_anim.c</Name>
-        <ColumnNumber>34</ColumnNumber>
-        <TopLine>74</TopLine>
-        <CurrentLine>93</CurrentLine>
-        <Folding>1</Folding>
-        <ContractedFolders></ContractedFolders>
-        <PaneID>0</PaneID>
-      </Doc>
-      <Doc>
-        <Name>..\HARDWARE\SDIO\sdio_sdcard.c</Name>
-        <ColumnNumber>72</ColumnNumber>
-        <TopLine>1311</TopLine>
-        <CurrentLine>1327</CurrentLine>
-        <Folding>1</Folding>
-        <ContractedFolders></ContractedFolders>
-        <PaneID>0</PaneID>
-      </Doc>
-      <Doc>
-        <Name>../HARDWARE/../HARDWARE/ASR_PRO/asr_pro.h</Name>
-        <ColumnNumber>0</ColumnNumber>
-        <TopLine>1</TopLine>
-        <CurrentLine>1</CurrentLine>
+        <Name>../Core/Inc/stm32f4xx_hal_conf.h</Name>
+        <ColumnNumber>18</ColumnNumber>
+        <TopLine>377</TopLine>
+        <CurrentLine>399</CurrentLine>
         <Folding>1</Folding>
         <ContractedFolders></ContractedFolders>
         <PaneID>0</PaneID>

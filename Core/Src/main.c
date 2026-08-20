@@ -63,7 +63,7 @@
 void SystemClock_Config(void);
 void MX_FREERTOS_Init(void);
 /* USER CODE BEGIN PFP */
-
+static void MX_RTC_Init(void);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -105,6 +105,7 @@ int main(void)
   MX_SPI1_Init();
   MX_FSMC_Init();
   MX_USART3_UART_Init();
+  MX_RTC_Init();
   //
   /* USER CODE BEGIN 2 */
 	delay_init();
@@ -183,6 +184,33 @@ void SystemClock_Config(void)
 }
 
 /* USER CODE BEGIN 4 */
+
+RTC_HandleTypeDef hrtc;
+
+void HAL_RTC_MspInit(RTC_HandleTypeDef *rtcHandle)
+{
+    RCC_PeriphCLKInitTypeDef PeriphClkInitStruct = {0};
+    __HAL_RCC_LSI_ENABLE();
+    while (!__HAL_RCC_GET_FLAG(RCC_FLAG_LSIRDY)) {}
+    PeriphClkInitStruct.PeriphClockSelection = RCC_PERIPHCLK_RTC;
+    PeriphClkInitStruct.RTCClockSelection = RCC_RTCCLKSOURCE_LSI;
+    HAL_RCCEx_PeriphCLKConfig(&PeriphClkInitStruct);
+    __HAL_RCC_RTC_ENABLE();
+}
+
+static void MX_RTC_Init(void)
+{
+    hrtc.Instance = RTC;
+    hrtc.Init.HourFormat = RTC_HOURFORMAT_24;
+    hrtc.Init.AsynchPrediv = 127;
+    hrtc.Init.SynchPrediv = 255;
+    hrtc.Init.OutPut = RTC_OUTPUT_DISABLE;
+    hrtc.Init.OutPutPolarity = RTC_OUTPUT_POLARITY_HIGH;
+    hrtc.Init.OutPutType = RTC_OUTPUT_TYPE_OPENDRAIN;
+    if (HAL_RTC_Init(&hrtc) != HAL_OK) {
+        Error_Handler();
+    }
+}
 
 /* USER CODE END 4 */
 

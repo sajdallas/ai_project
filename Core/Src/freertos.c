@@ -74,14 +74,19 @@ static lv_obj_t *chat_input;         /* 用户输入框 */
 static lv_obj_t *chat_send_btn;      /* 发送按钮 */
 static lv_obj_t *kb;                 /* 虚拟键盘 */
 static volatile int chat_pending = 0;/* 1=等待 AI 回复 */
+static volatile int wifi_connected = 0;  /* 1=WiFi 已连接 */
 
 /* ---- 拼音输入法候选栏 ---- */
-#define IME_MAX_CAND 8                  /* 候选栏最多显示的候选字数 */
+#define IME_MAX_CAND 6                  /* 候选栏每页最多显示的候选字数 */
 static lv_obj_t *ime_bar;               /* 候选栏容器 */
 static lv_obj_t *ime_btns[IME_MAX_CAND];  /* 候选字按钮 */
 static lv_obj_t *ime_lbls[IME_MAX_CAND];  /* 候选字标签 */
 static char ime_cand[IME_MAX_CAND][4];    /* 候选字 UTF-8（3 字节 + \0） */
 static int  ime_cand_plen[IME_MAX_CAND];  /* 候选字来源拼音组的拼音长度 */
+static int  ime_page;                     /* 当前候选页 */
+static int  ime_total;                    /* 总候选字数 */
+static char ime_all_cand[512][4];         /* 全部候选字缓存 */
+static int  ime_all_plen[512];            /* 全部候选字拼音长度 */
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
@@ -153,14 +158,15 @@ const osMessageQueueAttr_t asr_queue_attributes = {
 /* USER CODE BEGIN FunctionPrototypes */
 static void create_main_ui(void);
 static void create_robot_face(void);
-static void create_status_ui(void);
-static void create_settings_ui(void);
+static void create_system_ui(void);
+static void create_clock_ui(void);
+static void main_to_clock_handler(lv_event_t *e);
 static void create_ai_ui(void);
 
 static lv_obj_t *idle_scr;
 static lv_obj_t *main_scr;
-static lv_obj_t *status_scr;
-static lv_obj_t *settings_scr;
+static lv_obj_t *system_scr;
+static lv_obj_t *clock_scr;
 static lv_obj_t *ai_scr;
 static lv_obj_t *status_info_label;   /* 系统状态页面的信息标签 */
 static lv_obj_t *robot_eye_l, *robot_eye_r, *robot_pupil_l, *robot_pupil_r, *robot_mouth; /* 机器人表情 */
@@ -179,6 +185,8 @@ static void ime_update_candidates(void);
 static void ime_commit(const char *cand, int pinyin_len);
 static void ime_cand_handler(lv_event_t *e);
 static void ime_value_changed_handler(lv_event_t *e);
+static void ime_prev_handler(lv_event_t *e);
+static void ime_next_handler(lv_event_t *e);
 
 /* USER CODE END FunctionPrototypes */
 
@@ -285,8 +293,8 @@ void lvglStartTask(void *argument)
     lv_port_indev_init();
 
     create_robot_face();
-    create_status_ui();
-    create_settings_ui();
+    create_system_ui();
+    create_clock_ui();
     create_ai_ui();
     create_main_ui();
     
@@ -343,13 +351,14 @@ void lvglStartTask(void *argument)
                 lv_scr_load(main_scr);
                 break;
             case ASR_CMD_STATUS:
-                lv_scr_load(status_scr);
+            case ASR_CMD_SETTINGS:
+                lv_scr_load(system_scr);
                 break;
             case ASR_CMD_AI_CHAT:
                 lv_scr_load(ai_scr);
                 break;
-            case ASR_CMD_SETTINGS:
-                lv_scr_load(settings_scr);
+            case ASR_CMD_CLOCK:
+                lv_scr_load(clock_scr);
                 break;
             case ASR_CMD_BACK:
                 lv_scr_load(main_scr);
@@ -372,6 +381,58 @@ void lvglStartTask(void *argument)
   /* USER CODE END lvglStartTask */
 }
 
+/* 时间同步：从 HTTP 响应头 "Date:" 字段解析并设置 RTC，仅执行一次 */
+static int rtc_synced = 0;
+
+static void esp_sync_time(const char *resp)
+{
+    if (rtc_synced || !resp) return;
+
+    const char *p = strstr(resp, "Date: ");
+    if (!p) return;
+    p += 6;
+
+    /* 跳过星期几 */
+    while (*p == ' ') p++;
+    while (*p && *p != ' ') p++;
+    while (*p == ' ') p++;
+
+    /* 解析 "20 Aug 2026 12:34:56 GMT" */
+    int day = 0, year = 0, hour = 0, min = 0, sec = 0;
+    char mon_str[4] = {0};
+    if (sscanf(p, "%d %3s %d %d:%d:%d", &day, mon_str, &year, &hour, &min, &sec) < 6) return;
+
+    static const char *months[] = {"Jan","Feb","Mar","Apr","May","Jun",
+                                    "Jul","Aug","Sep","Oct","Nov","Dec"};
+    int mon = 0;
+    for (int i = 0; i < 12; i++) {
+        if (strncmp(mon_str, months[i], 3) == 0) { mon = i + 1; break; }
+    }
+    if (mon == 0) return;
+
+    RTC_TimeTypeDef sTime;
+    RTC_DateTypeDef sDate;
+
+    /* GMT 转北京时间 (UTC+8)，处理跨日 */
+    int total_h = hour + 8;
+    int day_carry = total_h / 24;
+    total_h = total_h % 24;
+
+    sTime.Hours = (uint8_t)total_h;
+    sTime.Minutes = min;
+    sTime.Seconds = sec;
+    sTime.TimeFormat = RTC_HOURFORMAT_24;
+    sTime.DayLightSaving = RTC_DAYLIGHTSAVING_NONE;
+    sTime.StoreOperation = RTC_STOREOPERATION_RESET;
+    sDate.WeekDay = 1;
+    sDate.Month = mon;
+    sDate.Date = day + day_carry;
+    sDate.Year = year - 2000;
+    HAL_RTC_SetTime(&hrtc, &sTime, RTC_FORMAT_BIN);
+    HAL_RTC_SetDate(&hrtc, &sDate, RTC_FORMAT_BIN);
+    rtc_synced = 1;
+}
+
 /* USER CODE BEGIN Header_esp8266StartTask */
 /**
 * @brief Function implementing the esp8266Task thread.
@@ -386,45 +447,75 @@ void esp8266StartTask(void *argument)
     char req[256];
     static char json[8192];
 
-    esp_log("\xE6\xAD\xA3\xE5\x9C\xA8\xE5\x88\x9D\xE5\xA7\x8B\xE5\x8C\x96ESP8266..."); /* 正在初始化ESP8266... */
-    ESP_Init();
-    osDelay(2000);
+    /* 初始化 + 连接 WiFi，失败则重试 */
+    while (!wifi_connected) {
+        esp_log("\xE6\xAD\xA3\xE5\x9C\xA8\xE5\x88\x9D\xE5\xA7\x8B\xE5\x8C\x96ESP8266..."); /* 正在初始化ESP8266... */
+        ESP_Init();
+        osDelay(2000);
 
-    status = ESP_SendCmd("AT\r\n", "OK", 2000);
-    if (status == ESP_OK) {
+        status = ESP_SendCmd("AT\r\n", "OK", 2000);
+        if (status != ESP_OK) {
+            esp_log("AT\xE9\x80\x9A\xE8\xAE\xAF\xE5\xA4\xB1\xE8\xB4\xA5\xEF\xBC\x8C5\xE7\xA7\x92\xE5\x90\x8E\xE9\x87\x8D\xE8\xAF\x95..."); /* AT通讯失败，5秒后重试... */
+            osDelay(5000);
+            continue;
+        }
         esp_log("AT\xE9\x80\x9A\xE8\xAE\xAF\xE6\xAD\xA3\xE5\xB8\xB8"); /* AT通讯正常 */
-    } else {
-        esp_log("AT\xE9\x80\x9A\xE8\xAE\xAF\xE5\xA4\xB1\xE8\xB4\xA5"); /* AT通讯失败 */
-        for (;;) osDelay(1000);
-    }
 
-    esp_log("\xE6\xAD\xA3\xE5\x9C\xA8\xE8\xBF\x9E\xE6\x8E\xA5WiFi..."); /* 正在连接WiFi... */
-    status = ESP_ConnectAP("HUAWEI-1FKZ9T", "FSNH82502");
-    if (status == ESP_OK) {
+        esp_log("\xE6\xAD\xA3\xE5\x9C\xA8\xE8\xBF\x9E\xE6\x8E\xA5WiFi..."); /* 正在连接WiFi... */
+        status = ESP_ConnectAP("HUAWEI-1FKZ9T", "FSNH82502");
+        if (status != ESP_OK) {
+            esp_log("WiFi\xE8\xBF\x9E\xE6\x8E\xA5\xE5\xA4\xB1\xE8\xB4\xA5\xEF\xBC\x8C5\xE7\xA7\x92\xE5\x90\x8E\xE9\x87\x8D\xE8\xAF\x95..."); /* WiFi连接失败，5秒后重试... */
+            osDelay(5000);
+            continue;
+        }
+
+        wifi_connected = 1;
         esp_log("WiFi\xE8\xBF\x9E\xE6\x8E\xA5\xE6\x88\x90\xE5\x8A\x9F"); /* WiFi连接成功 */
-    } else {
-        esp_log("WiFi\xE8\xBF\x9E\xE6\x8E\xA5\xE5\xA4\xB1\xE8\xB4\xA5"); /* WiFi连接失败 */
-        for (;;) osDelay(1000);
     }
 
     esp_log("\xE7\xB3\xBB\xE7\xBB\x9F\xE5\xB0\xB1\xE7\xBB\xAA"); /* 系统就绪 */
 
+    /* 上电自动对时 */
+    if (!rtc_synced) {
+        esp_log("\xE6\xAD\xA3\xE5\x9C\xA8\xE5\x90\x8C\xE6\xAD\xA5\xE6\x97\xB6\xE9\x92\x9F..."); /* 正在同步时钟... */
+        status = ESP_HTTPPost("http://httpbin.org/post", "{}", http_resp, (uint16_t)sizeof(http_resp));
+        if (status == ESP_OK) {
+            esp_sync_time(http_resp);
+            esp_log(rtc_synced ? "\xE6\x97\xB6\xE9\x92\x9F\xE5\x90\x8C\xE6\xAD\xA5\xE6\x88\x90\xE5\x8A\x9F"
+                               : "\xE6\x97\xB6\xE9\x92\x9F\xE5\x90\x8C\xE6\xAD\xA5\xE5\xA4\xB1\xE8\xB4\xA5"); /* 时钟同步成功/失败 */
+        } else {
+            esp_log("\xE6\x97\xB6\xE9\x92\x9F\xE5\x90\x8C\xE6\xAD\xA5\xE5\xA4\xB1\xE8\xB4\xA5"); /* 时钟同步失败 */
+        }
+    }
+
     for (;;) {
-        /* 等待 lvglTask 发来的对话请求 */
+        /* 断网则自动重连 */
+        if (!wifi_connected) {
+            ESP_Init();
+            osDelay(2000);
+            status = ESP_ConnectAP("HUAWEI-1FKZ9T", "FSNH82502");
+            if (status == ESP_OK) {
+                wifi_connected = 1;
+            } else {
+                osDelay(10000);
+            }
+            continue;
+        }
+
+        /* 等待 AI 对话请求 */
         if (osMessageQueueGet(esp_ai_req_queueHandle, req, NULL, osWaitForever) == osOK) {
             chat_build_json(json, (int)sizeof(json));
 
-            esp_log("POST to Qwen...");
             status = ESP_HTTPPostAuth(AI_URL, json, AI_KEY, http_resp, (uint16_t)sizeof(http_resp));
 
             if (status == ESP_OK) {
+                esp_sync_time(http_resp);
                 extract_content(http_resp, json, (int)sizeof(json));
                 if (json[0] != '\0') {
                     esp_log_ai(json);
                 } else {
-                    /* 解析不到 content：把服务器原始响应打出来（优先显示响应体，跳过 HTTP 头） */
-                    char dump[CHAT_MSG_LEN];
                     const char *body = strstr(http_resp, "\r\n\r\n");
+                    char dump[CHAT_MSG_LEN];
                     snprintf(dump, sizeof(dump), "[\xE6\x97\xA0\xE5\x86\x85\xE5\xAE\xB9] %.200s",
                              body ? body + 4 : http_resp);
                     esp_log_ai(dump);
@@ -433,6 +524,7 @@ void esp8266StartTask(void *argument)
                 char b[32];
                 snprintf(b, sizeof(b), "[\xE9\x94\x99\xE8\xAF\xAF %d]", (int)status); /* [错误 N] */
                 esp_log_ai(b);
+                wifi_connected = 0;
             }
         }
     }
@@ -523,14 +615,14 @@ static void main_to_idle_handler(lv_event_t *e)
     lv_scr_load(idle_scr);
 }
 
-static void main_to_status_handler(lv_event_t *e)
+static void main_to_system_handler(lv_event_t *e)
 {
-    lv_scr_load(status_scr);
+    lv_scr_load(system_scr);
 }
 
-static void main_to_settings_handler(lv_event_t *e)
+static void main_to_clock_handler(lv_event_t *e)
 {
-    lv_scr_load(settings_scr);
+    lv_scr_load(clock_scr);
 }
 
 static void main_to_ai_handler(lv_event_t *e)
@@ -621,31 +713,78 @@ static void ime_update_candidates(void)
         return;
     }
 
-    /* 收集所有以 run 前 L 个字母开头的拼音组里的候选字 */
-    int cand_count = 0;
-    for (int g = 0; g < (int)PY_GROUP_COUNT && cand_count < IME_MAX_CAND; g++) {
+    /* 收集所有匹配的候选字（先不限制数量） */
+    int total = 0;
+    for (int g = 0; g < (int)PY_GROUP_COUNT && total < 512; g++) {
         if (strncmp(py_groups[g].py, run, L) == 0) {
             int plen = (int)strlen(py_groups[g].py);
             const char *chs = py_groups[g].chs;
-            while (*chs && cand_count < IME_MAX_CAND) {
-                memcpy(ime_cand[cand_count], chs, 3);   /* 每个汉字固定 3 字节 UTF-8 */
-                ime_cand[cand_count][3] = '\0';
-                ime_cand_plen[cand_count] = plen;
-                cand_count++;
+            while (*chs && total < 512) {
+                memcpy(ime_all_cand[total], chs, 3);
+                ime_all_cand[total][3] = '\0';
+                ime_all_plen[total] = plen;
+                total++;
                 chs += 3;
             }
         }
     }
 
+    ime_total = total;
+    ime_page = 0;
+
+    /* 填充当前页 */
+    int off = ime_page * IME_MAX_CAND;
     for (int i = 0; i < IME_MAX_CAND; i++) {
-        if (i < cand_count) {
+        int idx = off + i;
+        if (idx < total) {
+            memcpy(ime_cand[i], ime_all_cand[idx], 4);
+            ime_cand_plen[i] = ime_all_plen[idx];
             lv_label_set_text(ime_lbls[i], ime_cand[i]);
             lv_obj_clear_flag(ime_btns[i], LV_OBJ_FLAG_HIDDEN);
         } else {
+            ime_cand[i][0] = '\0';
             lv_obj_add_flag(ime_btns[i], LV_OBJ_FLAG_HIDDEN);
         }
     }
     lv_obj_clear_flag(ime_bar, LV_OBJ_FLAG_HIDDEN);
+}
+
+/* 翻页：刷新当前页候选字 */
+static void ime_refresh_page(void)
+{
+    int off = ime_page * IME_MAX_CAND;
+    for (int i = 0; i < IME_MAX_CAND; i++) {
+        int idx = off + i;
+        if (idx < ime_total) {
+            memcpy(ime_cand[i], ime_all_cand[idx], 4);
+            ime_cand_plen[i] = ime_all_plen[idx];
+            lv_label_set_text(ime_lbls[i], ime_cand[i]);
+            lv_obj_clear_flag(ime_btns[i], LV_OBJ_FLAG_HIDDEN);
+        } else {
+            ime_cand[i][0] = '\0';
+            lv_obj_add_flag(ime_btns[i], LV_OBJ_FLAG_HIDDEN);
+        }
+    }
+}
+
+/* 上一页 */
+static void ime_prev_handler(lv_event_t *e)
+{
+    (void)e;
+    if (ime_page > 0) {
+        ime_page--;
+        ime_refresh_page();
+    }
+}
+
+/* 下一页 */
+static void ime_next_handler(lv_event_t *e)
+{
+    (void)e;
+    if ((ime_page + 1) * IME_MAX_CAND < ime_total) {
+        ime_page++;
+        ime_refresh_page();
+    }
 }
 
 /* 把候选字提交进输入框：替换末尾拼音串的前 pinyin_len 个字母，保留剩余字母 */
@@ -713,7 +852,7 @@ static void create_main_ui(void)
     lv_obj_set_style_text_color(title, lv_color_hex(0x00ff41), 0);
     lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 15);
 
-    /* 按钮1: "表情", 100x75, 左上位置, 暗绿底 (#0d2818) + 绿色边框 */
+    /* 按钮1: "表情", 100x75, 左侧 */
     lv_obj_t *btn1 = lv_btn_create(main_scr);
     lv_obj_set_size(btn1, 100, 75);
     lv_obj_align(btn1, LV_ALIGN_CENTER, -55, -40);
@@ -727,7 +866,7 @@ static void create_main_ui(void)
     lv_obj_center(lbl1);
     lv_obj_add_event_cb(btn1, main_to_idle_handler, LV_EVENT_CLICKED, NULL);
 
-    /* 按钮2: "状态", 100x75, 右上位置, 暗绿底 (#0d2818) + 绿色边框 */
+    /* 按钮2: "系统", 100x75, 右上 */
     lv_obj_t *btn2 = lv_btn_create(main_scr);
     lv_obj_set_size(btn2, 100, 75);
     lv_obj_align(btn2, LV_ALIGN_CENTER, 55, -40);
@@ -735,13 +874,13 @@ static void create_main_ui(void)
     lv_obj_set_style_border_width(btn2, 0, 0);
     lv_obj_set_style_radius(btn2, 12, 0);
     lv_obj_t *lbl2 = lv_label_create(btn2);
-    lv_label_set_text(lbl2, "\xE7\x8A\xB6\xE6\x80\x81"); /* 状态 */
+    lv_label_set_text(lbl2, "\xE7\xB3\xBB\xE7\xBB\x9F"); /* 系统 */
     lv_obj_set_style_text_font(lbl2, &lv_font_cjk16, 0);
     lv_obj_set_style_text_color(lbl2, lv_color_hex(0x00ff41), 0);
     lv_obj_center(lbl2);
-    lv_obj_add_event_cb(btn2, main_to_status_handler, LV_EVENT_CLICKED, NULL);
+    lv_obj_add_event_cb(btn2, main_to_system_handler, LV_EVENT_CLICKED, NULL);
 
-    /* 按钮3: "AI对话", 100x75, 左下位置, 暗绿底 (#0d2818) + 绿色边框 */
+    /* 按钮3: "时钟", 100x75, 左下 */
     lv_obj_t *btn3 = lv_btn_create(main_scr);
     lv_obj_set_size(btn3, 100, 75);
     lv_obj_align(btn3, LV_ALIGN_CENTER, -55, 55);
@@ -749,13 +888,13 @@ static void create_main_ui(void)
     lv_obj_set_style_border_width(btn3, 0, 0);
     lv_obj_set_style_radius(btn3, 12, 0);
     lv_obj_t *lbl3 = lv_label_create(btn3);
-    lv_label_set_text(lbl3, "AI\xE5\xAF\xB9\xE8\xAF\x9D"); /* AI对话 */
+    lv_label_set_text(lbl3, "\xE6\x97\xB6\xE9\x92\x9F"); /* 时钟 */
     lv_obj_set_style_text_font(lbl3, &lv_font_cjk16, 0);
     lv_obj_set_style_text_color(lbl3, lv_color_hex(0x00ff41), 0);
     lv_obj_center(lbl3);
-    lv_obj_add_event_cb(btn3, main_to_ai_handler, LV_EVENT_CLICKED, NULL);
+    lv_obj_add_event_cb(btn3, main_to_clock_handler, LV_EVENT_CLICKED, NULL);
 
-    /* 按钮4: "设置", 100x75, 右下位置, 暗绿底 (#0d2818) + 绿色边框 */
+    /* 按钮4: "AI对话", 100x75, 右下 */
     lv_obj_t *btn4 = lv_btn_create(main_scr);
     lv_obj_set_size(btn4, 100, 75);
     lv_obj_align(btn4, LV_ALIGN_CENTER, 55, 55);
@@ -763,28 +902,28 @@ static void create_main_ui(void)
     lv_obj_set_style_border_width(btn4, 0, 0);
     lv_obj_set_style_radius(btn4, 12, 0);
     lv_obj_t *lbl4 = lv_label_create(btn4);
-    lv_label_set_text(lbl4, "\xE8\xAE\xBE\xE7\xBD\xAE"); /* 设置 */
+    lv_label_set_text(lbl4, "AI\xE5\xAF\xB9\xE8\xAF\x9D"); /* AI对话 */
     lv_obj_set_style_text_font(lbl4, &lv_font_cjk16, 0);
     lv_obj_set_style_text_color(lbl4, lv_color_hex(0x00ff41), 0);
     lv_obj_center(lbl4);
-    lv_obj_add_event_cb(btn4, main_to_settings_handler, LV_EVENT_CLICKED, NULL);
+    lv_obj_add_event_cb(btn4, main_to_ai_handler, LV_EVENT_CLICKED, NULL);
 
 }
 
 /**
- * @brief  创建系统状态页面UI
- * @note   包含标题栏、状态列表和AI输出文本区域
- *         - 顶部: "系统状态" 标题
- *         - 中部: 状态列表，用于显示系统运行状态信息
- *         - 底部: 文本区域，用于显示AI交互输出
+ * @brief  创建系统页面UI（合并原状态和设置）
+ * @note   包含标题栏、ESP8266状态日志、硬件信息
+ *         - 顶部: "系统" 标题 + 返回按钮
+ *         - 中部: 状态日志（实时更新）
+ *         - 底部: 硬件信息（MCU型号、主频、LCD、框架）
  */
-static void create_status_ui(void)
+static void create_system_ui(void)
 {
-    status_scr = lv_obj_create(NULL);
-    lv_obj_set_style_bg_color(status_scr, lv_color_hex(0x0a0a0a), 0);
+    system_scr = lv_obj_create(NULL);
+    lv_obj_set_style_bg_color(system_scr, lv_color_hex(0x0a0a0a), 0);
 
     /* 返回按钮 */
-    lv_obj_t *back_btn = lv_btn_create(status_scr);
+    lv_obj_t *back_btn = lv_btn_create(system_scr);
     lv_obj_set_size(back_btn, 60, 30);
     lv_obj_align(back_btn, LV_ALIGN_TOP_LEFT, 5, 5);
     lv_obj_set_style_bg_color(back_btn, lv_color_hex(0x0d2818), 0);
@@ -797,18 +936,95 @@ static void create_status_ui(void)
     lv_obj_add_event_cb(back_btn, back_click_handler, LV_EVENT_CLICKED, NULL);
 
     /* 标题 */
-    lv_obj_t *title = lv_label_create(status_scr);
-    lv_label_set_text(title, "\xE7\xB3\xBB\xE7\xBB\x9F\xE7\x8A\xB6\xE6\x80\x81"); /* 系统状态 */
+    lv_obj_t *title = lv_label_create(system_scr);
+    lv_label_set_text(title, "\xE7\xB3\xBB\xE7\xBB\x9F"); /* 系统 */
     lv_obj_set_style_text_font(title, &lv_font_cjk16, 0);
     lv_obj_set_style_text_color(title, lv_color_hex(0x00ff41), 0);
     lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 10);
 
     /* 状态信息标签: 显示 ESP8266 初始化等实时状态 */
-    status_info_label = lv_label_create(status_scr);
+    status_info_label = lv_label_create(system_scr);
     lv_label_set_text(status_info_label, "\xE7\xAD\x89\xE5\xBE\x85\xE5\x88\x9D\xE5\xA7\x8B\xE5\x8C\x96..."); /* 等待初始化... */
     lv_obj_set_style_text_font(status_info_label, &lv_font_cjk16, 0);
     lv_obj_set_style_text_color(status_info_label, lv_color_hex(0x00ff41), 0);
     lv_obj_align(status_info_label, LV_ALIGN_CENTER, 0, -20);
+
+    /* 硬件信息标签 */
+    lv_obj_t *info = lv_label_create(system_scr);
+    lv_label_set_text(info, "MCU: STM32F407VET6\n"
+                            "Freq: 168MHz\n"
+                            "LCD: 320x240\n"
+                            "FreeRTOS + LVGL");
+    lv_obj_set_style_text_font(info, &lv_font_cjk16, 0);
+    lv_obj_set_style_text_color(info, lv_color_hex(0x00ff41), 0);
+    lv_obj_align(info, LV_ALIGN_BOTTOM_MID, 0, -20);
+}
+
+/**
+ * @brief  时钟显示页面
+ * @note   大字体数字时钟 + 日期显示，每秒更新
+ */
+static lv_obj_t *clock_time_label;
+static lv_obj_t *clock_date_label;
+
+static void clock_timer_cb(lv_timer_t *timer)
+{
+    RTC_TimeTypeDef sTime;
+    RTC_DateTypeDef sDate;
+    HAL_RTC_GetTime(&hrtc, &sTime, RTC_FORMAT_BIN);
+    HAL_RTC_GetDate(&hrtc, &sDate, RTC_FORMAT_BIN);
+
+    char buf[16];
+    snprintf(buf, sizeof(buf), "%02d:%02d:%02d",
+             sTime.Hours, sTime.Minutes, sTime.Seconds);
+    lv_label_set_text(clock_time_label, buf);
+
+    snprintf(buf, sizeof(buf), "%04d-%02d-%02d",
+             2000 + sDate.Year, sDate.Month, sDate.Date);
+    lv_label_set_text(clock_date_label, buf);
+}
+
+static void create_clock_ui(void)
+{
+    clock_scr = lv_obj_create(NULL);
+    lv_obj_set_style_bg_color(clock_scr, lv_color_hex(0x0a0a0a), 0);
+
+    /* 返回按钮 */
+    lv_obj_t *back_btn = lv_btn_create(clock_scr);
+    lv_obj_set_size(back_btn, 60, 30);
+    lv_obj_align(back_btn, LV_ALIGN_TOP_LEFT, 5, 5);
+    lv_obj_set_style_bg_color(back_btn, lv_color_hex(0x0d2818), 0);
+    lv_obj_set_style_border_width(back_btn, 0, 0);
+    lv_obj_t *back_label = lv_label_create(back_btn);
+    lv_label_set_text(back_label, "\xE8\xBF\x94\xE5\x9B\x9E"); /* 返回 */
+    lv_obj_set_style_text_font(back_label, &lv_font_cjk16, 0);
+    lv_obj_set_style_text_color(back_label, lv_color_hex(0x00ff41), 0);
+    lv_obj_center(back_label);
+    lv_obj_add_event_cb(back_btn, back_click_handler, LV_EVENT_CLICKED, NULL);
+
+    /* 标题 */
+    lv_obj_t *title = lv_label_create(clock_scr);
+    lv_label_set_text(title, "\xE6\x97\xB6\xE9\x92\x9F"); /* 时钟 */
+    lv_obj_set_style_text_font(title, &lv_font_cjk16, 0);
+    lv_obj_set_style_text_color(title, lv_color_hex(0x00ff41), 0);
+    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 10);
+
+    /* 时间显示（大字体） */
+    clock_time_label = lv_label_create(clock_scr);
+    lv_label_set_text(clock_time_label, "--:--:--");
+    lv_obj_set_style_text_font(clock_time_label, &lv_font_montserrat_40, 0);
+    lv_obj_set_style_text_color(clock_time_label, lv_color_hex(0x00ff41), 0);
+    lv_obj_align(clock_time_label, LV_ALIGN_CENTER, 0, -15);
+
+    /* 日期显示 */
+    clock_date_label = lv_label_create(clock_scr);
+    lv_label_set_text(clock_date_label, "----/--/--");
+    lv_obj_set_style_text_font(clock_date_label, &lv_font_cjk16, 0);
+    lv_obj_set_style_text_color(clock_date_label, lv_color_hex(0x00ff41), 0);
+    lv_obj_align(clock_date_label, LV_ALIGN_CENTER, 0, 35);
+
+    /* 每秒刷新定时器 */
+    lv_timer_create(clock_timer_cb, 1000, NULL);
 }
 
 /**
@@ -883,51 +1099,6 @@ static void create_robot_face(void)
 }
 
 /**
- * @brief  创建设置页面UI
- * @note   显示系统硬件信息及开发环境，提供返回按钮
- *         - 顶部: "设置" 标题
- *         - 中部: 系统信息（MCU型号、主频、LCD分辨率、软件框架）
- *         - 底部: "返回" 按钮，点击触发 back_click_handler 返回上一页
- */
-static void create_settings_ui(void)
-{
-    /* 创建空白屏幕作为容器 */
-    settings_scr = lv_obj_create(NULL);
-    lv_obj_set_style_bg_color(settings_scr, lv_color_hex(0x0a0a0a), 0);
-
-    /* 顶部标题: "设置" */
-    lv_obj_t *title = lv_label_create(settings_scr);
-    lv_label_set_text(title, "\xE8\xAE\xBE\xE7\xBD\xAE"); /* 设置 */
-    lv_obj_set_style_text_font(title, &lv_font_cjk16, 0);
-    lv_obj_set_style_text_color(title, lv_color_hex(0x00ff41), 0);
-    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 10);
-
-    /* 系统信息标签: 显示MCU型号、主频、LCD分辨率、RTOS框架 */
-    lv_obj_t *info = lv_label_create(settings_scr);
-    lv_label_set_text(info, "MCU: STM32F407VET6\n"
-                            "Freq: 168MHz\n"
-                            "LCD: 320x240\n"
-                            "FreeRTOS + LVGL");
-    lv_obj_set_style_text_font(info, &lv_font_cjk16, 0);
-    lv_obj_set_style_text_color(info, lv_color_hex(0x00ff41), 0);
-    lv_obj_align(info, LV_ALIGN_CENTER, 0, -20);
-
-    /* 返回按钮: 100x40, 底部居中, 点击返回主菜单 */
-    lv_obj_t *back_btn = lv_btn_create(settings_scr);
-    lv_obj_set_size(back_btn, 100, 40);
-    lv_obj_align(back_btn, LV_ALIGN_BOTTOM_MID, 0, -20);
-    lv_obj_set_style_bg_color(back_btn, lv_color_hex(0x0d2818), 0);
-    lv_obj_set_style_border_width(back_btn, 0, 0);
-    lv_obj_t *back_label = lv_label_create(back_btn);
-    lv_label_set_text(back_label, "\xE8\xBF\x94\xE5\x9B\x9E"); /* 返回 */
-    lv_obj_set_style_text_font(back_label, &lv_font_cjk16, 0);
-    lv_obj_set_style_text_color(back_label, lv_color_hex(0x00ff41), 0);
-    lv_obj_center(back_label);
-    /* 绑定返回事件: 点击触发 back_click_handler 回到主菜单 */
-    lv_obj_add_event_cb(back_btn, back_click_handler, LV_EVENT_CLICKED, NULL);
-}
-
-/**
  * @brief  创建AI对话页面UI
  * @note   提供输入框+折叠键盘+对话气泡列表
  *         - 顶部: 返回按钮 + "AI对话" 标题
@@ -981,11 +1152,14 @@ static void create_ai_ui(void)
     lv_obj_add_event_cb(chat_send_btn, chat_send_handler, LV_EVENT_CLICKED, NULL);
 
     /* 对话列表 */
-    chat_list = lv_list_create(ai_scr);
-    lv_obj_set_size(chat_list, 230, 120);
+    chat_list = lv_obj_create(ai_scr);
+    lv_obj_set_size(chat_list, 230, 150);
     lv_obj_align(chat_list, LV_ALIGN_TOP_MID, 0, 85);
     lv_obj_set_style_bg_color(chat_list, lv_color_hex(0x0d0d0d), 0);
     lv_obj_set_style_border_width(chat_list, 0, 0);
+    lv_obj_set_scroll_dir(chat_list, LV_DIR_VER);
+    lv_obj_set_flex_flow(chat_list, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_style_pad_all(chat_list, 4, 0);
 
     /* 虚拟键盘: 最后创建=最上层，默认隐藏 */
     kb = lv_keyboard_create(ai_scr);
@@ -993,10 +1167,14 @@ static void create_ai_ui(void)
     lv_obj_add_flag(kb, LV_OBJ_FLAG_HIDDEN);
 
     /* 欢迎语：仅 UI 显示，不加入对话历史（避免以 assistant 开头发给 API 被拒） */
-    lv_obj_t *welcome_item = lv_list_add_text(chat_list, "AI: \xE4\xBD\xA0\xE5\xA5\xBD\xEF\xBC\x8C\xE6\x88\x91\xE6\x98\xAF AI \xE5\x8A\xA9\xE6\x89\x8B"); /* AI: 你好，我是 AI 助手 */
-    lv_obj_set_style_text_font(welcome_item, &lv_font_cjk16, 0);
+    lv_obj_t *welcome_label = lv_label_create(chat_list);
+    lv_label_set_text(welcome_label, "AI: \xE4\xBD\xA0\xE5\xA5\xBD\xEF\xBC\x8C\xE6\x88\x91\xE6\x98\xAF AI \xE5\x8A\xA9\xE6\x89\x8B"); /* AI: 你好，我是 AI 助手 */
+    lv_obj_set_style_text_font(welcome_label, &lv_font_cjk16, 0);
+    lv_obj_set_style_text_color(welcome_label, lv_color_hex(0xcccccc), 0);
+    lv_label_set_long_mode(welcome_label, LV_LABEL_LONG_WRAP);
+    lv_obj_set_width(welcome_label, 220);
 
-    /* ---- 拼音候选栏：透明容器 + 8 个候选字按钮，贴键盘上方，默认隐藏 ---- */
+    /* ---- 拼音候选栏：左右箭头 + 6 个候选字按钮，贴键盘上方，默认隐藏 ---- */
     ime_bar = lv_obj_create(ai_scr);
     lv_obj_set_size(ime_bar, 240, 40);
     lv_obj_set_style_bg_opa(ime_bar, LV_OPA_TRANSP, 0);
@@ -1004,6 +1182,35 @@ static void create_ai_ui(void)
     lv_obj_set_style_pad_all(ime_bar, 0, 0);
     lv_obj_align_to(ime_bar, kb, LV_ALIGN_OUT_TOP_MID, 0, 0);
 
+    /* 左箭头 */
+    lv_obj_t *prev_btn = lv_btn_create(ime_bar);
+    lv_obj_set_size(prev_btn, 20, 34);
+    lv_obj_align(prev_btn, LV_ALIGN_LEFT_MID, 5, 0);
+    lv_obj_set_style_bg_color(prev_btn, lv_color_hex(0x0d2818), 0);
+    lv_obj_set_style_radius(prev_btn, 6, 0);
+    lv_obj_set_style_border_width(prev_btn, 0, 0);
+    lv_obj_t *pl = lv_label_create(prev_btn);
+    lv_label_set_text(pl, "\xe2\x97\x80"); /* ◀ */
+    lv_obj_set_style_text_font(pl, &lv_font_cjk16, 0);
+    lv_obj_set_style_text_color(pl, lv_color_white(), 0);
+    lv_obj_center(pl);
+    lv_obj_add_event_cb(prev_btn, ime_prev_handler, LV_EVENT_CLICKED, NULL);
+
+    /* 右箭头 */
+    lv_obj_t *next_btn = lv_btn_create(ime_bar);
+    lv_obj_set_size(next_btn, 20, 34);
+    lv_obj_align(next_btn, LV_ALIGN_RIGHT_MID, -5, 0);
+    lv_obj_set_style_bg_color(next_btn, lv_color_hex(0x0d2818), 0);
+    lv_obj_set_style_radius(next_btn, 6, 0);
+    lv_obj_set_style_border_width(next_btn, 0, 0);
+    lv_obj_t *nl = lv_label_create(next_btn);
+    lv_label_set_text(nl, "\xe2\x96\xb6"); /* ▶ */
+    lv_obj_set_style_text_font(nl, &lv_font_cjk16, 0);
+    lv_obj_set_style_text_color(nl, lv_color_white(), 0);
+    lv_obj_center(nl);
+    lv_obj_add_event_cb(next_btn, ime_next_handler, LV_EVENT_CLICKED, NULL);
+
+    /* 6 个候选字按钮 */
     int first_center = -(IME_MAX_CAND * 26 + (IME_MAX_CAND - 1) * 3) / 2 + 13;
     for (int i = 0; i < IME_MAX_CAND; i++) {
         ime_btns[i] = lv_btn_create(ime_bar);
@@ -1130,9 +1337,18 @@ static void chat_ui_update(void)
         } else {
             snprintf(disp, sizeof(disp), "AI: %s", chat_history[i].content);
         }
-        lv_obj_t *item = lv_list_add_text(chat_list, disp);
-        lv_obj_set_style_text_font(item, &lv_font_cjk16, 0);
+        lv_obj_t *label = lv_label_create(chat_list);
+        lv_label_set_text(label, disp);
+        lv_obj_set_style_text_font(label, &lv_font_cjk16, 0);
+        lv_label_set_long_mode(label, LV_LABEL_LONG_WRAP);
+        lv_obj_set_width(label, 220);
+        if (strcmp(chat_history[i].role, "user") == 0) {
+            lv_obj_set_style_text_color(label, lv_color_hex(0x00ff41), 0);
+        } else {
+            lv_obj_set_style_text_color(label, lv_color_hex(0xcccccc), 0);
+        }
     }
+    lv_obj_scroll_to_view(lv_obj_get_child(chat_list, -1), LV_ANIM_OFF);
 }
 
 /* USER CODE END Application */

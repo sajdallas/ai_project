@@ -10,17 +10,18 @@
 
 /* 语音命令 ID 定义 — 与 ASR PRO 上位机配置的 ID 严格对应
  * 上位机 ID 1 → 打印 "1" → STM32 解析为 cmd_id=0x01 → 对应宏
- * 以此类推，ID 1~6 直通 */
+ * 以此类推，ID 1~7 直通 */
 #define ASR_CMD_MAIN_MENU    0x01   /* 打开菜单 */
 #define ASR_CMD_IDLE         0x02   /* 待机画面（表情） */
 #define ASR_CMD_STATUS       0x03   /* 系统状态 */
 #define ASR_CMD_AI_CHAT      0x04   /* AI对话 */
 #define ASR_CMD_BACK         0x05   /* 返回 */
 #define ASR_CMD_SETTINGS     0x06   /* 设置 */
+#define ASR_CMD_CLOCK        0x07   /* 时钟 */
 
 /* 语音识别消息（仅离线命令 ID，无语音转文字功能） */
 typedef struct {
-    uint8_t cmd_id;             /* 命令 ID 1~6 */
+    uint8_t cmd_id;             /* 命令 ID 1~7 */
 } asr_msg_t;
 
 /* 超时判帧：如果收到数据后 N ms 内没有新字节且没有换行符，也视为一帧结束 */
