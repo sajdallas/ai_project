@@ -1,0 +1,55 @@
+#include "asr.h"
+extern "C"{ void * __dso_handle = 0 ;}
+#include "setup.h"
+
+uint32_t snid;
+void ASR_CODE();
+
+//{speak:小蝶-清新女声,vol:10,speed:10,platform:haohaodada}
+//{playid:10001,voice:欢迎使用语音助手，用天问五幺唤醒我。}
+//{playid:10002,voice:我退下了，用天问五幺唤醒我}
+
+/* 语音识别成功回调：通过串口发送命令 ID 给 STM32
+ * 与 asr_pro.h 严格对应，ID 1~6 直通：
+ *   1=菜单  2=待机  3=系统状态
+ *   4=AI对话  5=返回  6=设置
+ */
+void ASR_CODE(){
+  set_state_enter_wakeup(10000);
+
+  switch (snid) {
+   case 1:  Serial.write('1'); Serial.write('\n'); break;  // 菜单
+   case 2:  Serial.write('2'); Serial.write('\n'); break;  // 待机
+   case 3:  Serial.write('3'); Serial.write('\n'); break;  // 系统状态
+   case 4:  Serial.write('4'); Serial.write('\n'); break;  // AI对话
+   case 5:  Serial.write('5'); Serial.write('\n'); break;  // 返回
+   case 6:  Serial.write('6'); Serial.write('\n'); break;  // 设置
+  }
+}
+
+void hardware_init(){
+  // 初始化串口（波特率 115200，与 STM32 USART1 一致）
+  Serial.begin(115200);
+  vol_set(7);
+  vTaskDelete(NULL);
+}
+
+void setup()
+{
+  //==================== 语音命令配置 ====================
+  // 唤醒词
+  //{ID:0,keyword:"唤醒词",ASR:"天问五幺",ASRTO:"我在"}
+  // 命令词（ID 对应 switch 分支，ASR 为识别词，ASRTO 为 TTS 回复）
+  //{ID:1,keyword:"命令词",ASR:"打开菜单",ASRTO:"已打开菜单"}
+  //{ID:2,keyword:"命令词",ASR:"待机画面",ASRTO:"好的"}
+  //{ID:3,keyword:"命令词",ASR:"系统状态",ASRTO:"好的"}
+  //{ID:4,keyword:"命令词",ASR:"打开对话",ASRTO:"已打开AI对话"}
+  //{ID:5,keyword:"命令词",ASR:"返回",ASRTO:"好的"}
+  //{ID:6,keyword:"命令词",ASR:"打开设置",ASRTO:"已打开设置"}
+  //====================================================
+
+  // 硬件引脚初始化（PA9/PA10 已由 STM32 的 USART1 占用，
+  // ASR PRO 与 STM32 通过串口交叉连接：TX-RX, RX-TX）
+  setPinFun(4,FIRST_FUNCTION);
+  pinMode(4,output);
+}

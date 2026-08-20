@@ -29,6 +29,18 @@ Project File Date:  08/20/2026
 Build target 'ai_project'
 Note: source file '..\LVGL\src\font\lv_font_punct16.c' - object file renamed from 'ai_project\lv_font_punct16.o' to 'ai_project\lv_font_punct16_1.o'.
 Note: source file '..\MALLOC\malloc.c' - object file renamed from 'ai_project\malloc.o' to 'ai_project\malloc_1.o'.
+compiling robot_face_anim.c...
+../LVGL/src/../src/misc/../../../lv_conf.h(786): warning:  #1-D: last line of file ends without a newline
+  #endif /*End of "Content enable"*/
+..\HARDWARE\ROBOT_FACE\robot_face_anim.h(27): warning:  #1-D: last line of file ends without a newline
+  #endif
+..\HARDWARE\ROBOT_FACE\robot_face_anim.c(314): warning:  #1-D: last line of file ends without a newline
+  }
+..\HARDWARE\ROBOT_FACE\robot_face_anim.c(28): warning:  #550-D: variable "g_prev_state"  was set but never used
+  static robot_state_t g_prev_state = ROBOT_IDLE;
+..\HARDWARE\ROBOT_FACE\robot_face_anim.c(33): warning:  #550-D: variable "g_blink_start"  was set but never used
+  static uint32_t g_blink_start;
+..\HARDWARE\ROBOT_FACE\robot_face_anim.c: 5 warnings, 0 errors
 compiling freertos.c...
 ../LVGL/src/../src/misc/../../../lv_conf.h(786): warning:  #1-D: last line of file ends without a newline
   #endif /*End of "Content enable"*/
@@ -38,23 +50,23 @@ compiling freertos.c...
   #endif
 ../HARDWARE/ESP8266/esp8266.h(42): warning:  #1-D: last line of file ends without a newline
   #endif
-../HARDWARE/../HARDWARE/ASR_PRO/asr_pro.h(48): warning:  #1-D: last line of file ends without a newline
+../HARDWARE/../HARDWARE/ASR_PRO/asr_pro.h(42): warning:  #1-D: last line of file ends without a newline
   #endif /* __ASR_PRO_H */
 ../HARDWARE/../HARDWARE/ROBOT_FACE/robot_face_anim.h(27): warning:  #1-D: last line of file ends without a newline
   #endif
-../Core/Src/freertos.c(379): warning:  #27-D: character value is out of range
+../Core/Src/freertos.c(389): warning:  #27-D: character value is out of range
       esp_log("\xE6\xAD\xA3\xE5\x9C\xA8\xE5\x88\x9D\xE5\xA7\x8B\xE5\x8C\x96ESP8266..."); /* 正在初始化ESP8266... */
-../Core/Src/freertos.c(448): warning:  #223-D: function "ASR_GetMessage" declared implicitly
+../Core/Src/freertos.c(457): warning:  #223-D: function "ASR_GetMessage" declared implicitly
           if (ASR_GetMessage(&msg)) {
-../Core/Src/freertos.c(463): warning:  #188-D: enumerated type mixed with another type
+../Core/Src/freertos.c(472): warning:  #188-D: enumerated type mixed with another type
       m.type = 10;
-../Core/Src/freertos.c(1127): warning:  #1-D: last line of file ends without a newline
+../Core/Src/freertos.c(1138): warning:  #1-D: last line of file ends without a newline
   /* USER CODE END Application */
 ../Core/Src/freertos.c: 10 warnings, 0 errors
 linking...
-Program Size: Code=199716 RO-data=191296 RW-data=1308 ZI-data=1152344  
+Program Size: Code=199976 RO-data=191296 RW-data=1308 ZI-data=1152344  
 FromELF: creating hex file...
-"ai_project\ai_project.axf" - 0 Error(s), 10 Warning(s).
+"ai_project\ai_project.axf" - 0 Error(s), 15 Warning(s).
 
 <h2>Software Packages used:</h2>
 

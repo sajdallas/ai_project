@@ -14,7 +14,7 @@
 #define WANDER_MAX_MS    2800
 #define WANDER_DUR_MS    300
 #define MOUTH_IDLE_W     80
-#define MOUTH_IDLE_H     20
+#define MOUTH_IDLE_H     5
 #define MOUTH_O_W        36
 #define MOUTH_O_H        36
 #define MOUTH_OPEN_H     36
@@ -183,7 +183,7 @@ static void mouth_set_shape(int w, int h, int radius)
 
 static void mouth_anim_idle(void)
 {
-    mouth_set_shape(MOUTH_IDLE_W, MOUTH_IDLE_H, 10);
+    mouth_set_shape(MOUTH_IDLE_W, MOUTH_IDLE_H, 2);
 }
 
 static void mouth_anim_listening(void)

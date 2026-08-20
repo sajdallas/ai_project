@@ -300,6 +300,10 @@ void lvglStartTask(void *argument)
     int status_line = 0;
     char ai_buf[512];
 
+    /* 表情状态计时器：用于自动恢复到 IDLE */
+    uint32_t face_state_timer = 0;
+    robot_state_t face_auto_state = ROBOT_IDLE;
+
     for (;;) {
         /* 读取 ESP8266 状态消息并更新状态页面 */
         while (osMessageQueueGet(esp_rx_queueHandle, &m, NULL, 0) == osOK) {
@@ -317,42 +321,48 @@ void lvglStartTask(void *argument)
         if (osMessageQueueGet(esp_ai_queueHandle, ai_buf, NULL, 0) == osOK) {
             chat_add_message("assistant", ai_buf);
             chat_pending = 0;
+            /* AI 回复到达 → 机器人说话表情，2 秒后自动恢复 */
+            robot_face_set_state(ROBOT_SPEAKING);
+            face_state_timer = lv_tick_get();
+            face_auto_state = ROBOT_IDLE;
         }
 
-        /* 读取语音识别消息并处理 */
+        /* 读取语音命令并处理（仅离线命令词，无语音转文字） */
         asr_msg_t asr_msg;
         if (osMessageQueueGet(asr_queueHandle, &asr_msg, NULL, 0) == osOK) {
-            if (asr_msg.type == ASR_TYPE_COMMAND) {
-                switch (asr_msg.cmd_id) {
-                case ASR_CMD_IDLE:
-                    lv_scr_load(idle_scr);
-                    break;
-                case ASR_CMD_MAIN_MENU:
-                    lv_scr_load(main_scr);
-                    break;
-                case ASR_CMD_STATUS:
-                    lv_scr_load(status_scr);
-                    break;
-                case ASR_CMD_AI_CHAT:
-                    lv_scr_load(ai_scr);
-                    break;
-                case ASR_CMD_SETTINGS:
-                    lv_scr_load(settings_scr);
-                    break;
-                case ASR_CMD_BACK:
-                    lv_scr_load(main_scr);
-                    break;
-                default:
-                    break;
-                }
-            } else if (asr_msg.type == ASR_TYPE_TEXT) {
-                /* 语音识别到文字内容，填入输入框并发送给 AI */
-                if (chat_input != NULL) {
-                    lv_textarea_set_text(chat_input, asr_msg.text);
-                    lv_scr_load(ai_scr);
-                    chat_send_to_ai(asr_msg.text);
-                }
+            /* 收到语音命令 → 机器人聆听表情 */
+            robot_face_set_state(ROBOT_LISTENING);
+            face_state_timer = lv_tick_get();
+            face_auto_state = ROBOT_IDLE;
+
+            switch (asr_msg.cmd_id) {
+            case ASR_CMD_IDLE:
+                lv_scr_load(idle_scr);
+                break;
+            case ASR_CMD_MAIN_MENU:
+                lv_scr_load(main_scr);
+                break;
+            case ASR_CMD_STATUS:
+                lv_scr_load(status_scr);
+                break;
+            case ASR_CMD_AI_CHAT:
+                lv_scr_load(ai_scr);
+                break;
+            case ASR_CMD_SETTINGS:
+                lv_scr_load(settings_scr);
+                break;
+            case ASR_CMD_BACK:
+                lv_scr_load(main_scr);
+                break;
+            default:
+                break;
             }
+        }
+
+        /* 表情自动恢复：超过 1.8 秒后切回目标状态 */
+        if (face_state_timer > 0 && (lv_tick_get() - face_state_timer) > 1800) {
+            robot_face_set_state(face_auto_state);
+            face_state_timer = 0;
         }
 
         robot_face_tick();
@@ -444,7 +454,6 @@ void asrStartTask(void *argument)
     ASR_Init();
 
     for (;;) {
-        /* 读取 ASR PRO 串口数据，解析后写入消息队列 */
         if (ASR_GetMessage(&msg)) {
             osMessageQueuePut(asr_queueHandle, &msg, 0, 100);
         }
@@ -536,6 +545,8 @@ static void chat_send_handler(lv_event_t *e)
     const char *msg = lv_textarea_get_text(chat_input);
     if (msg[0] == '\0') return;
 
+    /* 触摸发送 → 思考表情 */
+    robot_face_set_state(ROBOT_THINKING);
     chat_send_to_ai(msg);
     lv_textarea_set_text(chat_input, "");
 }

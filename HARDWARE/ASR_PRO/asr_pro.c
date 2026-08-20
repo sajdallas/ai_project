@@ -26,6 +26,7 @@ void ASR_Init(void)
 void ASR_RxCallback(void)
 {
     uint8_t ch = asr.rx_buf[asr.rx_len];
+    asr.last_rx_tick = HAL_GetTick();  /* 记录最后收字节的时刻 */
 
     /* 收到换行符 0x0A 或回车 0x0D 表示一帧结束 */
     if (ch == 0x0A || ch == 0x0D) {
@@ -46,29 +47,35 @@ void ASR_RxCallback(void)
     }
 }
 
-/* 解析收到的数据帧，填充 asr_msg_t */
+/* 解析收到的数据帧，填充 asr_msg_t
+ * ASR PRO 仅支持离线命令词，串口发送单个 ASCII 数字 '1'~'7' */
 static int ASR_Parse(asr_msg_t *msg)
 {
     if (!asr.data_ready || asr.rx_len == 0) return 0;
 
-    /* 按命令 ID 模式解析：第一字节为命令 ID */
-    uint8_t cmd = asr.rx_buf[0];
+    uint8_t first = asr.rx_buf[0];
 
-    if (cmd >= 0x01 && cmd <= 0x0F) {
-        msg->type = ASR_TYPE_COMMAND;
-        msg->cmd_id = cmd;
+    if (first >= '1' && first <= '9') {
+        msg->cmd_id = (uint8_t)(first - '0');   /* ASCII '1' → 0x01 */
     } else {
-        /* 其余情况当作文字内容 */
-        msg->type = ASR_TYPE_TEXT;
-        snprintf(msg->text, sizeof(msg->text), "%s", (char*)asr.rx_buf);
+        msg->cmd_id = 0;   /* 无效数据 */
     }
 
-    asr.data_ready = 0;
+    /* 解析完毕，清空缓冲区，从头开始接收下一帧 */
+    ASR_FlushRx();
     return 1;
 }
 
-/* 获取一帧数据（非阻塞），返回 1 表示有数据 */
+/* 获取一帧数据（非阻塞），返回 1 表示有数据
+ * 判帧策略：优先等换行符；若收不到换行符，超时 ASR_RX_TIMEOUT_MS 后也视为一帧结束 */
 int ASR_GetMessage(asr_msg_t *msg)
 {
+    /* 超时判帧：有数据但没收到换行符，且超过 N ms 无新字节 */
+    if (!asr.data_ready && asr.rx_len > 0) {
+        if (HAL_GetTick() - asr.last_rx_tick >= ASR_RX_TIMEOUT_MS) {
+            asr.rx_buf[asr.rx_len] = '\0';
+            asr.data_ready = 1;
+        }
+    }
     return ASR_Parse(msg);
 }
