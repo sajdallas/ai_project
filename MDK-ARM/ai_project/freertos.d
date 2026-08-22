@@ -192,3 +192,6 @@ ai_project\freertos.o: ../Core/Inc/usart.h
 ai_project\freertos.o: ../Core/Inc/pinyin_data.h
 ai_project\freertos.o: ../HARDWARE/../HARDWARE/ASR_PRO/asr_pro.h
 ai_project\freertos.o: ../HARDWARE/../HARDWARE/ROBOT_FACE/robot_face_anim.h
+ai_project\freertos.o: ../HARDWARE/../HARDWARE/aht20_bmp280/ATH20.h
+ai_project\freertos.o: ../HARDWARE/../HARDWARE/aht20_bmp280/bsp_i2c.h
+ai_project\freertos.o: ../HARDWARE/../HARDWARE/aht20_bmp280/BMP280.h

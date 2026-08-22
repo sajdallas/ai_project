@@ -1,0 +1,151 @@
+#include "stm32f10x.h"
+#include "stm32f10x_usart.h"
+#include "misc.h"
+#include "stdio.h"
+#include "delay.h"
+#include "bsp_i2c.h"
+#include "ATH20.h"
+#include "BMP280.h"
+
+void RCC_Configuration(void);
+void GPIO_Configuration(void);
+
+GPIO_InitTypeDef GPIO_InitStructure;
+
+#pragma import(__use_no_semihosting)
+struct __FILE
+{
+	int handle;
+
+};
+FILE __stdout;
+_sys_exit(int x)
+{
+	x = x;
+}
+int fputc(int ch, FILE *f)
+{
+	while(USART_GetFlagStatus(USART1,USART_FLAG_TC)==RESET);
+    USART_SendData(USART1,(uint8_t)ch);
+	return ch;
+}
+
+void uart_init(u32 bound)
+{
+    //GPIO¶Ë¿ÚÉèÖÃ
+    GPIO_InitTypeDef GPIO_InitStructure;
+	USART_InitTypeDef USART_InitStructure;
+
+	RCC_APB2PeriphClockCmd(RCC_APB2Periph_USART1|RCC_APB2Periph_GPIOA, ENABLE);	//Ê¹ÄÜUSART1£¬GPIOAÊ±ÖÓ
+ 	USART_DeInit(USART1);  //¸´Î»´®¿Ú1
+    //USART1_TX   PA.9
+    GPIO_InitStructure.GPIO_Pin = GPIO_Pin_9; //PA.9
+    GPIO_InitStructure.GPIO_Speed = GPIO_Speed_50MHz;
+    GPIO_InitStructure.GPIO_Mode = GPIO_Mode_AF_PP;	//¸´ÓÃÍÆÍìÊä³ö
+    GPIO_Init(GPIOA, &GPIO_InitStructure); //³õÊ¼»¯PA9
+
+    //USART1_RX	  PA.10
+    GPIO_InitStructure.GPIO_Pin = GPIO_Pin_10;
+    GPIO_InitStructure.GPIO_Mode = GPIO_Mode_IN_FLOATING;//¸¡¿ÕÊäÈë
+    GPIO_Init(GPIOA, &GPIO_InitStructure);  //³õÊ¼»¯PA10
+
+    //USART ³õÊ¼»¯ÉèÖÃ
+	USART_InitStructure.USART_BaudRate = bound;//Ò»°ãÉèÖÃÎª9600;
+	USART_InitStructure.USART_WordLength = USART_WordLength_8b;//×Ö³¤Îª8Î»Êý¾Ý¸ñÊ½
+	USART_InitStructure.USART_StopBits = USART_StopBits_1;//Ò»¸öÍ£Ö¹Î»
+	USART_InitStructure.USART_Parity = USART_Parity_No;//ÎÞÆæÅ¼Ð£ÑéÎ»
+	USART_InitStructure.USART_HardwareFlowControl = USART_HardwareFlowControl_None;//ÎÞÓ²¼þÊý¾ÝÁ÷¿ØÖÆ
+	USART_InitStructure.USART_Mode = USART_Mode_Rx | USART_Mode_Tx;	//ÊÕ·¢Ä£Ê½
+
+    USART_Init(USART1, &USART_InitStructure); //³õÊ¼»¯´®¿Ú
+
+    USART_Cmd(USART1, ENABLE);                    //Ê¹ÄÜ´®¿Ú
+}
+
+int main(void)
+{
+    uint8_t ret = 0;
+    float P,T,ALT;
+    uint32_t CT_data[2];
+	int  c1,t1;
+    uint8_t LED_Stat = 0;
+
+    RCC_Configuration();					   	//ÉèÖÃÏµÍ³Ê±ÖÓ
+    GPIO_Configuration();					    //IO¿ÚÉè
+    I2C_Bus_Init();
+
+    uart_init(115200);
+
+    ret = ATH20_Init();
+    if(ret == 0)
+    {
+        printf("AHT20´«¸ÐÆ÷³õÊ¼»¯´íÎó\r\n");
+        while(1);
+    }
+
+    ret = BMP280_Init();
+    if(ret != 0x58)
+    {
+        printf("BMP280´«¸ÐÆ÷³õÊ¼»¯´íÎó\r\n");
+        while(1);
+    }
+
+    while(1)
+    {
+        /* ¶ÁÈ¡ ATH20 ´«¸ÐÆ÷Êý¾Ý*/
+        while(ATH20_Read_Cal_Enable() == 0)
+        {
+            ATH20_Init();//Èç¹ûÎª0ÔÙÊ¹ÄÜÒ»´Î
+            SoftDelay_ms(30);
+        }
+        ATH20_Read_CTdata(CT_data);  //¶ÁÈ¡ÎÂ¶ÈºÍÊª¶È
+        c1 = CT_data[0] * 1000 / 1024 / 1024;  //¼ÆËãµÃµ½Êª¶ÈÖµ£¨·Å´óÁË10±¶,Èç¹ûc1=523£¬±íÊ¾ÏÖÔÚÊª¶ÈÎª52.3%£©
+        t1 = CT_data[1] * 200 *10 / 1024 / 1024 - 500;//¼ÆËãµÃµ½ÎÂ¶ÈÖµ£¨·Å´óÁË10±¶£¬Èç¹ût1=245£¬±íÊ¾ÏÖÔÚÎÂ¶ÈÎª24.5¡æ£©
+
+        /* ¶ÁÈ¡ BMP280 ´«¸ÐÆ÷Êý¾Ý*/
+        BMP280GetData(&P, &T, &ALT);
+
+        printf("***************************\r\n");
+        printf("AHT20ÎÂÊª¶È´«¸ÐÆ÷²âÊÔÊý¾Ý:\r\n");
+        printf("ÎÂ¶È: %d.%d ¡æ\r\n",(t1/10),(t1%10));
+        printf("Êª¶È: %d.%d %%\r\n",(c1/10),(c1%10));
+        printf("\n");
+        printf("BMP280´«¸ÐÆ÷²âÊÔÊý¾Ý:\r\n");
+        printf("ÆøÑ¹: %0.4f hPa\r\n",P);
+        printf("ÎÂ¶È: %0.2f ¡æ\r\n",T);
+        printf("º£°Î: %0.2f m\r\n",ALT);
+        printf("\r\n");
+
+        SoftDelay_ms(1000);
+
+        if(LED_Stat == 0)
+        {
+            LED_Stat = 1;
+            GPIO_ResetBits(GPIOA, GPIO_Pin_2);
+        }
+        else
+        {
+            LED_Stat = 0;
+            GPIO_SetBits(GPIOA, GPIO_Pin_2);
+        }
+    }
+}
+
+void RCC_Configuration(void)
+{
+  SystemInit();
+
+  RCC_APB2PeriphClockCmd(RCC_APB2Periph_AFIO, ENABLE);
+  RCC_APB2PeriphClockCmd(RCC_APB2Periph_GPIOA | RCC_APB2Periph_GPIOB | RCC_APB2Periph_GPIOC
+  						| RCC_APB2Periph_GPIOD| RCC_APB2Periph_GPIOE , ENABLE);
+}
+
+void GPIO_Configuration(void)
+{
+  GPIO_InitTypeDef GPIO_InitStructure;
+
+  GPIO_InitStructure.GPIO_Pin = GPIO_Pin_2 | GPIO_Pin_4 | GPIO_Pin_5 | GPIO_Pin_7;				     //×´Ì¬LED1
+  GPIO_InitStructure.GPIO_Mode = GPIO_Mode_Out_PP;			 //Í¨ÓÃÍÆÍìÊä³öÄ£Ê½
+  GPIO_InitStructure.GPIO_Speed = GPIO_Speed_50MHz;			 //Êä³öÄ£Ê½×î´óËÙ¶È50MHz
+  GPIO_Init(GPIOA, &GPIO_InitStructure);
+}

@@ -340,7 +340,7 @@
               <MiscControls></MiscControls>
               <Define>USE_HAL_DRIVER,STM32F407xx</Define>
               <Undefine></Undefine>
-              <IncludePath>../Core/Inc;../Drivers/STM32F4xx_HAL_Driver/Inc;../Drivers/STM32F4xx_HAL_Driver/Inc/Legacy;../Middlewares/Third_Party/FreeRTOS/Source/include;../Middlewares/Third_Party/FreeRTOS/Source/CMSIS_RTOS_V2;../Middlewares/Third_Party/FreeRTOS/Source/portable/RVDS/ARM_CM4F;../Drivers/CMSIS/Device/ST/STM32F4xx/Include;../Drivers/CMSIS/Include;../HARDWARE/24CXX;../HARDWARE/IIC;../HARDWARE/LCD;../HARDWARE/RS485;../HARDWARE/TOUCH;../HARDWARE/W25QXX;../HARDWARE;../LVGL/src;../LVGL/src/core;../LVGL/src/draw;../LVGL/src/draw/sw;../LVGL/src/font;../LVGL/src/hal;../LVGL/src/misc;../LVGL/src/extra;../LVGL/src/extra/themes/default;../LVGL/src/extra/themes/basic;../../ai_project;../HARDWARE/LVGL;../LVGL/src/widgets;../LVGL/src/extra/layouts/flex;../LVGL/src/extra/layouts/grid;../LVGL/src/extra/widgets/tabview;../LVGL/src/extra/widgets/tileview;../LVGL/src/extra/widgets/win;../LVGL/src/extra/widgets/spinbox;../LVGL/src/extra/widgets/spinner;../LVGL/src/extra/widgets/menu;../LVGL/src/extra/widgets/meter;../LVGL/src/extra/widgets/msgbox;../LVGL/src/extra/widgets/list;../LVGL/src/extra/widgets/calendar;../LVGL/src/extra/widgets/chart;../LVGL/src/extra/widgets/colorwheel;../LVGL/src/extra/widgets/keyboard;../LVGL/src/extra/widgets/led;../HARDWARE/ESP8266;../TEXT;../MALLOC;../FATFS/src;../FATFS/exfuns;../HARDWARE/SDIO;..\HARDWARE\ROBOT_FACE;..\HARDWARE\ASR_PRO</IncludePath>
+              <IncludePath>../Core/Inc;../Drivers/STM32F4xx_HAL_Driver/Inc;../Drivers/STM32F4xx_HAL_Driver/Inc/Legacy;../Middlewares/Third_Party/FreeRTOS/Source/include;../Middlewares/Third_Party/FreeRTOS/Source/CMSIS_RTOS_V2;../Middlewares/Third_Party/FreeRTOS/Source/portable/RVDS/ARM_CM4F;../Drivers/CMSIS/Device/ST/STM32F4xx/Include;../Drivers/CMSIS/Include;../HARDWARE/24CXX;../HARDWARE/IIC;../HARDWARE/LCD;../HARDWARE/RS485;../HARDWARE/TOUCH;../HARDWARE/W25QXX;../HARDWARE;../LVGL/src;../LVGL/src/core;../LVGL/src/draw;../LVGL/src/draw/sw;../LVGL/src/font;../LVGL/src/hal;../LVGL/src/misc;../LVGL/src/extra;../LVGL/src/extra/themes/default;../LVGL/src/extra/themes/basic;../../ai_project;../HARDWARE/LVGL;../LVGL/src/widgets;../LVGL/src/extra/layouts/flex;../LVGL/src/extra/layouts/grid;../LVGL/src/extra/widgets/tabview;../LVGL/src/extra/widgets/tileview;../LVGL/src/extra/widgets/win;../LVGL/src/extra/widgets/spinbox;../LVGL/src/extra/widgets/spinner;../LVGL/src/extra/widgets/menu;../LVGL/src/extra/widgets/meter;../LVGL/src/extra/widgets/msgbox;../LVGL/src/extra/widgets/list;../LVGL/src/extra/widgets/calendar;../LVGL/src/extra/widgets/chart;../LVGL/src/extra/widgets/colorwheel;../LVGL/src/extra/widgets/keyboard;../LVGL/src/extra/widgets/led;../HARDWARE/ESP8266;../TEXT;../MALLOC;../FATFS/src;../FATFS/exfuns;../HARDWARE/SDIO;..\HARDWARE\ROBOT_FACE;..\HARDWARE\ASR_PRO;..\HARDWARE\aht20_bmp280</IncludePath>
             </VariousControls>
           </Cads>
           <Aads>
@@ -1503,6 +1503,21 @@
               <FileName>asr_pro.c</FileName>
               <FileType>1</FileType>
               <FilePath>..\HARDWARE\ASR_PRO\asr_pro.c</FilePath>
+            </File>
+            <File>
+              <FileName>ATH20.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\HARDWARE\aht20_bmp280\ATH20.c</FilePath>
+            </File>
+            <File>
+              <FileName>BMP280.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\HARDWARE\aht20_bmp280\BMP280.c</FilePath>
+            </File>
+            <File>
+              <FileName>bsp_i2c.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\HARDWARE\aht20_bmp280\bsp_i2c.c</FilePath>
             </File>
           </Files>
         </Group>
