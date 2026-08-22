@@ -198,6 +198,8 @@ static void chat_ui_update(void);
 static void chat_send_handler(lv_event_t *e);
 static void ai_input_click_handler(lv_event_t *e);
 static void ai_scr_click_handler(lv_event_t *e);
+static void cal_goto_rtc_month(void);
+static void cal_refresh(void);
 static void ime_update_candidates(void);
 static void ime_commit(const char *cand, int pinyin_len);
 static void ime_cand_handler(lv_event_t *e);
@@ -852,6 +854,9 @@ static void main_to_ai_handler(lv_event_t *e)
 
 static void main_to_calendar_handler(lv_event_t *e)
 {
+    (void)e;
+    cal_goto_rtc_month();
+    cal_refresh();
     lv_scr_load(calendar_scr);
 }
 
@@ -1363,9 +1368,36 @@ static void create_clock_ui(void)
  * @brief  日历页面
  * @note   月视图，可前后翻月，当天高亮显示
  */
+#define CAL_YEAR_BASE 2000
+#define CAL_YEAR_MAX  2035
+
 static int cal_year, cal_month;
-static lv_obj_t *cal_title;
+static lv_obj_t *cal_year_dd;
+static lv_obj_t *cal_month_dd;
 static lv_obj_t *cal_cells[42];
+
+static const char cal_year_options[] =
+    "2000\n2001\n2002\n2003\n2004\n2005\n2006\n2007\n2008\n2009\n"
+    "2010\n2011\n2012\n2013\n2014\n2015\n2016\n2017\n2018\n2019\n"
+    "2020\n2021\n2022\n2023\n2024\n2025\n2026\n2027\n2028\n2029\n"
+    "2030\n2031\n2032\n2033\n2034\n2035";
+
+static const char cal_month_options[] =
+    "1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12";
+
+static void cal_goto_rtc_month(void)
+{
+    RTC_TimeTypeDef sTime;
+    RTC_DateTypeDef sDate;
+
+    HAL_RTC_GetTime(&hrtc, &sTime, RTC_FORMAT_BIN);
+    HAL_RTC_GetDate(&hrtc, &sDate, RTC_FORMAT_BIN);
+
+    cal_year = 2000 + sDate.Year;
+    cal_month = sDate.Month;
+    if (cal_year < CAL_YEAR_BASE || cal_year > CAL_YEAR_MAX) cal_year = CAL_YEAR_BASE;
+    if (cal_month < 1 || cal_month > 12) cal_month = 1;
+}
 
 static int cal_get_weekday(int y, int m, int d)
 {
@@ -1385,8 +1417,19 @@ static int cal_days_in_month(int y, int m)
 static void cal_refresh(void)
 {
     char buf[16];
-    snprintf(buf, sizeof(buf), "%d\xE5\xB9\xB4 %d\xE6\x9C\x88", cal_year, cal_month);
-    lv_label_set_text(cal_title, buf);
+
+    if (cal_year_dd != NULL) {
+        uint16_t year_sel = (uint16_t)(cal_year - CAL_YEAR_BASE);
+        if (lv_dropdown_get_selected(cal_year_dd) != year_sel) {
+            lv_dropdown_set_selected(cal_year_dd, year_sel);
+        }
+    }
+    if (cal_month_dd != NULL) {
+        uint16_t month_sel = (uint16_t)(cal_month - 1);
+        if (lv_dropdown_get_selected(cal_month_dd) != month_sel) {
+            lv_dropdown_set_selected(cal_month_dd, month_sel);
+        }
+    }
 
     int days = cal_days_in_month(cal_year, cal_month);
     int wd = cal_get_weekday(cal_year, cal_month, 1);
@@ -1419,17 +1462,17 @@ static void cal_refresh(void)
     }
 }
 
-static void cal_prev_handler(lv_event_t *e)
+static void cal_year_changed_handler(lv_event_t *e)
 {
-    (void)e;
-    if (--cal_month < 1) { cal_month = 12; cal_year--; }
+    lv_obj_t *dd = lv_event_get_target(e);
+    cal_year = CAL_YEAR_BASE + (int)lv_dropdown_get_selected(dd);
     cal_refresh();
 }
 
-static void cal_next_handler(lv_event_t *e)
+static void cal_month_changed_handler(lv_event_t *e)
 {
-    (void)e;
-    if (++cal_month > 12) { cal_month = 1; cal_year++; }
+    lv_obj_t *dd = lv_event_get_target(e);
+    cal_month = (int)lv_dropdown_get_selected(dd) + 1;
     cal_refresh();
 }
 
@@ -1458,37 +1501,42 @@ static void create_calendar_ui(void)
     lv_obj_set_style_text_color(title, lv_color_hex(0x00ff41), 0);
     lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 10);
 
-    /* 月份导航栏 */
-    lv_obj_t *prev_btn = lv_btn_create(calendar_scr);
-    lv_obj_set_size(prev_btn, 30, 24);
-    lv_obj_align(prev_btn, LV_ALIGN_TOP_MID, -80, 45);
-    lv_obj_set_style_bg_color(prev_btn, lv_color_hex(0x0d2818), 0);
-    lv_obj_set_style_border_width(prev_btn, 0, 0);
-    lv_obj_set_style_radius(prev_btn, 6, 0);
-    lv_obj_t *prev_lbl = lv_label_create(prev_btn);
-    lv_label_set_text(prev_lbl, LV_SYMBOL_PREV);
-    lv_obj_set_style_text_font(prev_lbl, &lv_font_montserrat_16, 0);
-    lv_obj_set_style_text_color(prev_lbl, lv_color_hex(0x00ff41), 0);
-    lv_obj_center(prev_lbl);
-    lv_obj_add_event_cb(prev_btn, cal_prev_handler, LV_EVENT_CLICKED, NULL);
+    /* 年月下拉选择 */
+    cal_year_dd = lv_dropdown_create(calendar_scr);
+    lv_dropdown_set_options_static(cal_year_dd, cal_year_options);
+    lv_dropdown_set_symbol(cal_year_dd, NULL);
+    lv_obj_set_size(cal_year_dd, 74, 26);
+    lv_obj_align(cal_year_dd, LV_ALIGN_TOP_MID, -52, 43);
+    lv_obj_set_style_bg_color(cal_year_dd, lv_color_hex(0x0d2818), 0);
+    lv_obj_set_style_border_width(cal_year_dd, 0, 0);
+    lv_obj_set_style_radius(cal_year_dd, 6, 0);
+    lv_obj_set_style_text_font(cal_year_dd, &lv_font_montserrat_16, 0);
+    lv_obj_set_style_text_color(cal_year_dd, lv_color_hex(0x00ff41), 0);
+    lv_obj_add_event_cb(cal_year_dd, cal_year_changed_handler, LV_EVENT_VALUE_CHANGED, NULL);
 
-    cal_title = lv_label_create(calendar_scr);
-    lv_obj_set_style_text_font(cal_title, &lv_font_cjk16, 0);
-    lv_obj_set_style_text_color(cal_title, lv_color_hex(0x00ff41), 0);
-    lv_obj_align(cal_title, LV_ALIGN_TOP_MID, 0, 45);
+    lv_obj_t *year_lbl = lv_label_create(calendar_scr);
+    lv_label_set_text(year_lbl, "\xE5\xB9\xB4"); /* 年 */
+    lv_obj_set_style_text_font(year_lbl, &lv_font_cjk16, 0);
+    lv_obj_set_style_text_color(year_lbl, lv_color_hex(0x00ff41), 0);
+    lv_obj_align(year_lbl, LV_ALIGN_TOP_MID, -8, 48);
 
-    lv_obj_t *next_btn = lv_btn_create(calendar_scr);
-    lv_obj_set_size(next_btn, 30, 24);
-    lv_obj_align(next_btn, LV_ALIGN_TOP_MID, 80, 45);
-    lv_obj_set_style_bg_color(next_btn, lv_color_hex(0x0d2818), 0);
-    lv_obj_set_style_border_width(next_btn, 0, 0);
-    lv_obj_set_style_radius(next_btn, 6, 0);
-    lv_obj_t *next_lbl = lv_label_create(next_btn);
-    lv_label_set_text(next_lbl, LV_SYMBOL_NEXT);
-    lv_obj_set_style_text_font(next_lbl, &lv_font_montserrat_16, 0);
-    lv_obj_set_style_text_color(next_lbl, lv_color_hex(0x00ff41), 0);
-    lv_obj_center(next_lbl);
-    lv_obj_add_event_cb(next_btn, cal_next_handler, LV_EVENT_CLICKED, NULL);
+    cal_month_dd = lv_dropdown_create(calendar_scr);
+    lv_dropdown_set_options_static(cal_month_dd, cal_month_options);
+    lv_dropdown_set_symbol(cal_month_dd, NULL);
+    lv_obj_set_size(cal_month_dd, 45, 26);
+    lv_obj_align(cal_month_dd, LV_ALIGN_TOP_MID, 35, 43);
+    lv_obj_set_style_bg_color(cal_month_dd, lv_color_hex(0x0d2818), 0);
+    lv_obj_set_style_border_width(cal_month_dd, 0, 0);
+    lv_obj_set_style_radius(cal_month_dd, 6, 0);
+    lv_obj_set_style_text_font(cal_month_dd, &lv_font_montserrat_16, 0);
+    lv_obj_set_style_text_color(cal_month_dd, lv_color_hex(0x00ff41), 0);
+    lv_obj_add_event_cb(cal_month_dd, cal_month_changed_handler, LV_EVENT_VALUE_CHANGED, NULL);
+
+    lv_obj_t *month_lbl = lv_label_create(calendar_scr);
+    lv_label_set_text(month_lbl, "\xE6\x9C\x88"); /* 月 */
+    lv_obj_set_style_text_font(month_lbl, &lv_font_cjk16, 0);
+    lv_obj_set_style_text_color(month_lbl, lv_color_hex(0x00ff41), 0);
+    lv_obj_align(month_lbl, LV_ALIGN_TOP_MID, 69, 48);
 
     /* 星期标题 */
     static const char *wd[] = {"\xE6\x97\xA5","\xE4\xB8\x80","\xE4\xBA\x8C",
@@ -1513,10 +1561,7 @@ static void create_calendar_ui(void)
     }
 
     /* 初始化当前年月 */
-    RTC_DateTypeDef sDate;
-    HAL_RTC_GetDate(&hrtc, &sDate, RTC_FORMAT_BIN);
-    cal_year = 2000 + sDate.Year;
-    cal_month = sDate.Month;
+    cal_goto_rtc_month();
     cal_refresh();
 }
 
