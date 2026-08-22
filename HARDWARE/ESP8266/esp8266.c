@@ -1,5 +1,8 @@
 #include "esp8266.h"
 #include "cmsis_os.h"
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 
 static esp_t esp;
 
@@ -242,11 +245,16 @@ esp_status_t ESP_HTTPPostAuth(const char *url, const char *json, const char *aut
         sprintf(cmd, "AT+CIPSSLCSNI=\"%s\"\r\n", host);
         ESP_SendCmd(cmd, "OK", 2000);
     }
-    sprintf(cmd, "AT+CIPSTART=\"SSL\",\"%s\",%d\r\n", host, port);
-    status = ESP_SendCmd(cmd, "OK", 15000);
-    if (status != ESP_OK) {
-        ESP_SendCmd("AT+CIPCLOSE\r\n", NULL, 1000);
-        ESP_SendCmd("AT+CIPSSL=1\r\n", "OK", 2000);
+    if (is_ssl) {
+        sprintf(cmd, "AT+CIPSTART=\"SSL\",\"%s\",%d\r\n", host, port);
+        status = ESP_SendCmd(cmd, "OK", 15000);
+        if (status != ESP_OK) {
+            ESP_SendCmd("AT+CIPCLOSE\r\n", NULL, 1000);
+            ESP_SendCmd("AT+CIPSSL=1\r\n", "OK", 2000);
+            sprintf(cmd, "AT+CIPSTART=\"TCP\",\"%s\",%d\r\n", host, port);
+            status = ESP_SendCmd(cmd, "OK", 15000);
+        }
+    } else {
         sprintf(cmd, "AT+CIPSTART=\"TCP\",\"%s\",%d\r\n", host, port);
         status = ESP_SendCmd(cmd, "OK", 15000);
     }
@@ -284,12 +292,15 @@ esp_status_t ESP_HTTPPostAuth(const char *url, const char *json, const char *aut
         return status;
     }
 
+    /* Clear the CIPSEND prompt/ack before sending the request. Do this before
+     * transmitting so a fast HTTP response is not flushed accidentally. */
+    ESP_FlushRx();
+
     /* send header + body */
     HAL_UART_Transmit(&huart3, (uint8_t *)header, header_len, 1000);
     HAL_UART_Transmit(&huart3, (uint8_t *)json, json_len, 1000);
 
     /* receive response, stripping +IPD framing */
-    ESP_FlushRx();
     n = ESP_RecvResponse(resp, resp_size, 60000);
 
     ESP_SendCmd("AT+CIPCLOSE\r\n", NULL, 1000);

@@ -52,3 +52,5 @@ ai_project\esp8266.o: ../Middlewares/Third_Party/FreeRTOS/Source/include/mpu_wra
 ai_project\esp8266.o: ../Middlewares/Third_Party/FreeRTOS/Source/include/task.h
 ai_project\esp8266.o: ../Middlewares/Third_Party/FreeRTOS/Source/include/list.h
 ai_project\esp8266.o: ../Middlewares/Third_Party/FreeRTOS/Source/CMSIS_RTOS_V2/cmsis_os2.h
+ai_project\esp8266.o: D:\keil\ARM\ARMCC\Bin\..\include\stdio.h
+ai_project\esp8266.o: D:\keil\ARM\ARMCC\Bin\..\include\stdlib.h

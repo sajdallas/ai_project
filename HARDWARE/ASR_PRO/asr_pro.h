@@ -18,6 +18,7 @@
 #define ASR_CMD_BACK         0x05   /* 返回 */
 #define ASR_CMD_SETTINGS     0x06   /* 设置 */
 #define ASR_CMD_CLOCK        0x07   /* 时钟 */
+#define ASR_CMD_CALENDAR     0x08   /* 日历 */
 
 /* 语音识别消息（仅离线命令 ID，无语音转文字功能） */
 typedef struct {
@@ -38,6 +39,7 @@ typedef struct {
 /* 函数声明 */
 void ASR_Init(void);
 void ASR_RxCallback(void);
+int ASR_GetMessage(asr_msg_t *msg);
 void ASR_ProcessTask(void *argument);
 
 #endif /* __ASR_PRO_H */

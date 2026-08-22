@@ -3,11 +3,14 @@
 % ---- 页面设置 ----
 \usepackage[top=2.5cm, bottom=2.5cm, left=2.5cm, right=2.5cm]{geometry}
 \usepackage{graphicx}
+\graphicspath{{项目图片/}}
 \usepackage{hyperref}
 \usepackage{listings}
 \usepackage{xcolor}
 \usepackage{enumitem}
+\usepackage{amsmath}
 \usepackage{tikz}
+\usetikzlibrary{positioning}
 \usepackage{float}
 \usepackage{tabularx}
 \usepackage{booktabs}
@@ -37,13 +40,14 @@
 }
 
 \pagestyle{fancy}
+\setlength{\headheight}{14pt}
 \fancyhf{}
-\fancyhead[L]{\small 桌面智能交互终端技术报告}
+\fancyhead[L]{\small 智能交互终端技术报告}
 \fancyhead[R]{\small STM32F407 + ASR PRO + ESP8266}
 \fancyfoot[C]{\thepage}
 \renewcommand{\headrulewidth}{0.5pt}
 
-\title{\textbf{桌面智能交互终端技术报告}\\
+\title{\textbf{智能交互终端技术报告}\\
        \large 基于 STM32F407 的多模态智能交互终端}
 \author{}
 \date{2026年8月}
@@ -55,6 +59,7 @@
 
 \begin{center}
 \begin{tabular}{rl}
+\textbf{项目名称} & 智能交互终端 \\
 \textbf{主控芯片} & STM32F407VET6 (ARM Cortex-M4, 168MHz) \\
 \textbf{语音识别} & 天问 ASR PRO (CI-03T 离线语音芯片) \\
 \textbf{WiFi通信}   & ESP8266 (ESP-AT 固件, 802.11 b/g/n) \\
@@ -63,14 +68,14 @@
 \textbf{操作系统}   & FreeRTOS (CMSIS-RTOS v2) \\
 \textbf{图形库}     & LVGL v8.3 \\
 \textbf{云端AI}     & 阿里云 DashScope (Qwen 3.8-Max) \\
-\textbf{开发环境}   & STM32CubeIDE + GCC ARM \\
+\textbf{开发环境}   & STM32CubeMX + Keil MDK-ARM \\
 \end{tabular}
 \end{center}
 
 \vspace{1cm}
 
 \begin{abstract}
-\noindent 本项目设计并实现了一款桌面智能交互终端。系统以 STM32F407 为主控制器，集成 LVGL 图形界面、虚拟表情动画、ASR PRO 离线语音命令控制，以及通过 ESP8266 连接阿里云 DashScope 大模型实现的云端 AI 对话功能。系统采用 FreeRTOS 多任务架构，通过消息队列实现模块间解耦通信，支持触摸屏拼音输入与离线语音命令两种交互方式，实现了具身化的智能对话体验。
+\noindent 本项目设计并实现了一款智能交互终端。系统以 STM32F407 为主控制器，集成 LVGL 图形界面、虚拟表情动画、ASR PRO 离线语音命令控制、模拟时钟、日历，以及通过 ESP8266 连接阿里云 DashScope 大模型实现的云端 AI 对话功能。系统采用 FreeRTOS 多任务架构，通过消息队列实现模块间解耦通信，支持触摸屏拼音输入与离线语音命令两种交互方式，实现了具身化的智能对话体验。
 \end{abstract}
 
 \newpage
@@ -96,8 +101,8 @@
     \node [block, below right=0.5cm and 2cm of stm32] (esp) {ESP8266\\WiFi模块\\ESP-AT固件};
     \node [block, below=2cm of stm32] (lcd) {TFT-LCD\\2.8'' 240×320\\ILI9341 + GT9147};
 
-    \draw [arrow] (asr) -- node[above] {USART1\\115200} (stm32);
-    \draw [arrow] (stm32) -- node[below] {USART3\\115200} (esp);
+    \draw [arrow] (asr) -- node[above] {USART1 115200} (stm32);
+    \draw [arrow] (stm32) -- node[below] {USART3 115200} (esp);
     \draw [arrow] (stm32) -- node[left] {FSMC 16位并口} (lcd);
     \draw [arrow] (stm32) -- node[above,sloped] {I2C1} (lcd);
 \end{tikzpicture}
@@ -119,7 +124,7 @@ lvglTask & LVGL图形刷新、UI事件处理、表情动画、ASR命令处理 & 
 esp8266Task & ESP8266 AT指令交互、WiFi连接、HTTP/HTTPS请求 & Normal & 4KB \\
 asrTask & ASR PRO串口数据接收与解析 & Normal & 4KB \\
 \bottomrule
-\end{tabular}
+\end{tabularx}
 \caption{FreeRTOS 任务分配}
 \end{table}
 
@@ -138,7 +143,7 @@ asrTask & ASR PRO串口数据接收与解析 & Normal & 4KB \\
 
 \subsection{页面结构}
 
-系统包含 5 个 LVGL 页面，通过语音命令或触摸操作切换：
+系统包含 6 个 LVGL 页面，通过语音命令或触摸操作切换：
 
 \begin{table}[H]
 \centering
@@ -147,14 +152,41 @@ asrTask & ASR PRO串口数据接收与解析 & Normal & 4KB \\
 \textbf{页面} & \textbf{语音命令} & \textbf{功能描述} \\
 \midrule
 待机画面 (idle\_scr) & ``待机画面'' & 虚拟表情动画（眨眼、眼球游走） \\
-主菜单 (main\_scr) & ``打开菜单'' & 4 个功能入口按钮（2×2 布局） \\
+主菜单 (main\_scr) & ``打开菜单'' & 4 个功能入口按钮，横向排列为桌面图标入口 \\
 系统 (system\_scr)  & ``系统状态'' / ``设置'' & ESP8266 连接状态日志、硬件信息 \\
-时钟 (clock\_scr)   & ``时钟'' & 大字体数字时钟，每秒刷新 \\
+时钟 (clock\_scr)   & ``时钟'' & 模拟表盘时钟，包含 12 小时刻度与时分秒指针 \\
+日历 (calendar\_scr) & ``日历'' & 月视图日历，支持前后翻月与当天高亮 \\
 AI对话 (ai\_scr)     & ``打开对话'' & 云端AI对话界面、拼音输入法 \\
 \bottomrule
-\end{tabular}
+\end{tabularx}
 \caption{UI 页面说明}
 \end{table}
+
+\subsection{界面展示}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.32\textwidth]{表情1.jpg}
+\includegraphics[width=0.32\textwidth]{表情2.jpg}
+\includegraphics[width=0.32\textwidth]{菜单.jpg}
+\caption{待机表情与主菜单界面}
+\end{figure}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.32\textwidth]{系统界面.jpg}
+\includegraphics[width=0.32\textwidth]{时钟.jpg}
+\includegraphics[width=0.32\textwidth]{日历.jpg}
+\caption{系统状态、模拟时钟与日历界面}
+\end{figure}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.32\textwidth]{ai对话.jpg}
+\includegraphics[width=0.32\textwidth]{ai对话2.jpg}
+\includegraphics[width=0.32\textwidth]{ai对话3.jpg}
+\caption{AI 对话与拼音输入界面}
+\end{figure}
 
 \subsection{拼音输入法}
 
@@ -162,7 +194,7 @@ AI对话 (ai\_scr)     & ``打开对话'' & 云端AI对话界面、拼音输入�
 
 \begin{itemize}
     \item 按拼音音节分组，405 个拼音码表，每组按使用频率排序候选字
-    \item 8 个候选字按钮，实时匹配当前输入拼音串
+    \item 6 个候选字按钮，实时匹配当前输入拼音串，支持左右翻页
     \item 支持模糊匹配（输入部分拼音即可显示候选字）
     \item 虚拟键盘输入，点击候选项自动替换末尾拼音串
 \end{itemize}
@@ -182,7 +214,7 @@ ROBOT\_LISTENING & 收到语音命令 & 嘴部微张(40×12)，提示正在聆�
 ROBOT\_THINKING & 提交AI请求 & 嘴部圆形(36×36)，表示思考中 \\
 ROBOT\_SPEAKING & 收到AI回复 & 嘴部交替张合(60×36/60×8, 180ms周期)，模拟说话 \\
 \bottomrule
-\end{tabular}
+\end{tabularx}
 \caption{机器人表情状态}
 \end{table}
 
@@ -234,6 +266,8 @@ void ASR_CODE() {
    case 4: Serial.write('4'); break;  // AI对话
    case 5: Serial.write('5'); break;  // 返回
    case 6: Serial.write('6'); break;  // 设置
+   case 7: Serial.write('7'); break;  // 时钟
+   case 8: Serial.write('8'); break;  // 日历
   }
   Serial.write('\n');
 }
@@ -280,7 +314,7 @@ ESP8266 运行 ESP-AT 固件，作为透传网卡，STM32 通过 AT 指令控制
 \texttt{AT+CIPSEND=<len>} & 申请发送 HTTP 请求 \\
 $\cdots$ HTTP 请求体 $\cdots$ & 发送 JSON 格式的 API 请求 \\
 \bottomrule
-\end{tabular}
+\end{tabularx}
 \caption{ESP8266 AT 指令序列}
 \end{table}
 
@@ -350,6 +384,7 @@ ai_project/
 |       |-- gt9147.c/h          # GT9147 触摸驱动
 |       |-- touch.c/h           # 触摸抽象层
 |-- Drivers/                    # STM32 HAL 库 + CMSIS
+|-- 项目图片/                    # 项目界面截图
 |-- DEBUG.md                    # ESP8266 调试笔记
 \end{lstlisting}
 
@@ -447,13 +482,6 @@ for (;;) {
     \item \textbf{冷启动超时}：大模型首次调用需加载模型，超时从 20 秒调整为 60 秒。
 \end{itemize}
 
-\subsection{机器人表情嘴巴不闭合}
-
-\textbf{问题}：待机状态下嘴巴看上去一直张着。
-
-\textbf{根因}：\texttt{MOUTH\_IDLE\_H = 20}，20 像素高度的椭圆在视觉上像张开的嘴。
-
-\textbf{解决}：将 \texttt{MOUTH\_IDLE\_H} 从 20 改为 5，圆角从 10 改为 2，形成一条细线，视觉上明确表示闭嘴状态。
 
 % ============================================================
 \section{技术指标}
@@ -474,7 +502,7 @@ AI 对话延迟 & 3--20 秒 (取决于网络和模型负载) \\
 串口波特率 & 115200 (USART1 接 ASR PRO, USART3 接 ESP8266) \\
 WiFi 标准 & 802.11 b/g/n, 2.4GHz \\
 \bottomrule
-\end{tabular}
+\end{tabularx}
 \caption{系统技术指标}
 \end{table}
 
@@ -484,13 +512,13 @@ WiFi 标准 & 802.11 b/g/n, 2.4GHz \\
 
 \subsection{项目成果}
 
-本项目成功实现了一款集语音控制、虚拟表情动画、云端 AI 对话于一体的桌面智能交互终端。主要成果包括：
+本项目成功实现了一款集语音控制、虚拟表情动画、模拟时钟、日历与云端 AI 对话于一体的智能交互终端。主要成果包括：
 
 \begin{enumerate}
     \item 基于 FreeRTOS 的多任务系统架构，任务间通过消息队列解耦，模块化程度高
-    \item 基于 LVGL 的图形界面，包含 5 个页面，支持拼音输入法（3755 汉字）
+    \item 基于 LVGL 的图形界面，包含 6 个页面，支持拼音输入法（3755 汉字）
     \item 机器人面部表情动画系统，4 种状态自动切换，具有情感化表达
-    \item ASR PRO 离线语音命令控制，支持 7 条页面切换命令
+    \item ASR PRO 离线语音命令控制，支持 8 条页面切换命令
     \item ESP8266 通过 HTTPS 连接阿里云 DashScope，实现多轮 AI 对话
 \end{enumerate}
 
