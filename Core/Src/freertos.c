@@ -32,6 +32,7 @@
 #include "lvgl.h"
 
 LV_FONT_DECLARE(lv_font_cjk16);
+static const lv_font_t *cjk16_font;
 #include "lv_port_disp.h"
 #include "lv_port_indev.h"
 #include "esp8266.h"
@@ -60,6 +61,13 @@ typedef struct {
     char text[128];
 } esp_msg_t;
 
+/* ---- 传感器数据 ---- */
+typedef struct {
+    float temperature;    /* AHT20 温度 (℃) */
+    float humidity;       /* AHT20 湿度 (%) */
+    float pressure;       /* BMP280 气压 (hPa) */
+    float altitude;       /* BMP280 海拔 (m) */
+} sensor_data_t;
 
 /* ---- AI 对话 ---- */
 #define CHAT_HISTORY_MAX 20          /* 最多保留 20 轮对话 */
@@ -157,6 +165,18 @@ osMessageQueueId_t asr_queueHandle;
 const osMessageQueueAttr_t asr_queue_attributes = {
   .name = "asr_queue"
 };
+/* Definitions for sensorTask */
+osThreadId_t sensorTaskHandle;
+const osThreadAttr_t sensorTask_attributes = {
+  .name = "sensorTask",
+  .stack_size = 1024 * 4,
+  .priority = (osPriority_t) osPriorityNormal,
+};
+/* Definitions for sensor_queue */
+osMessageQueueId_t sensor_queueHandle;
+const osMessageQueueAttr_t sensor_queue_attributes = {
+  .name = "sensor_queue"
+};
 
 /* Private function prototypes -----------------------------------------------*/
 /* USER CODE BEGIN FunctionPrototypes */
@@ -213,6 +233,7 @@ void StartDefaultTask(void *argument);
 void lvglStartTask(void *argument);
 void esp8266StartTask(void *argument);
 void asrStartTask(void *argument);
+void sensorStartTask(void *argument);
 
 void MX_FREERTOS_Init(void); /* (MISRA C 2004 rule 8.1) */
 
@@ -251,6 +272,9 @@ void MX_FREERTOS_Init(void) {
   /* creation of asr_queue */
   asr_queueHandle = osMessageQueueNew (4, sizeof(asr_msg_t), &asr_queue_attributes);
 
+  /* creation of sensor_queue */
+  sensor_queueHandle = osMessageQueueNew (4, sizeof(sensor_data_t), &sensor_queue_attributes);
+
   /* USER CODE BEGIN RTOS_QUEUES */
   /* add queues, ... */
   /* USER CODE END RTOS_QUEUES */
@@ -267,6 +291,9 @@ void MX_FREERTOS_Init(void) {
 
   /* creation of asrTask */
   asrTaskHandle = osThreadNew(asrStartTask, NULL, &asrTask_attributes);
+
+  /* creation of sensorTask */
+  sensorTaskHandle = osThreadNew(sensorStartTask, NULL, &sensorTask_attributes);
 
   /* USER CODE BEGIN RTOS_THREADS */
   /* USER CODE END RTOS_THREADS */
@@ -311,6 +338,7 @@ void lvglStartTask(void *argument)
     lv_port_disp_init();
     lv_port_indev_init();
 
+    cjk16_font = &lv_font_cjk16;
     create_robot_face();
     create_system_ui();
     create_clock_ui();
@@ -324,11 +352,6 @@ void lvglStartTask(void *argument)
 
     /* 屏幕加载后初始化表情动画（此时布局已确定，坐标正确） */
     robot_face_anim_init(robot_eye_l, robot_eye_r, robot_pupil_l, robot_pupil_r, robot_mouth, idle_scr);
-
-    /* 后台初始化传感器（屏幕已显示，不阻塞 UI） */
-    I2C_Bus_Init();
-    ATH20_Init();
-    BMP280_Init();
 
     esp_msg_t m;
     char status_buf[512] = "";
@@ -409,6 +432,24 @@ void lvglStartTask(void *argument)
         if (face_state_timer > 0 && (lv_tick_get() - face_state_timer) > 1800) {
             robot_face_set_state(face_auto_state);
             face_state_timer = 0;
+        }
+
+        /* 读取传感器数据并更新环境页面 */
+        {
+            sensor_data_t sensor;
+            if (osMessageQueueGet(sensor_queueHandle, &sensor, NULL, 0) == osOK) {
+                if (lv_scr_act() == env_scr) {
+                    char buf[64];
+                    snprintf(buf, sizeof(buf), "\xE6\xB8\xA9\xE5\xBA\xA6: %.1f \xE2\x84\x83", sensor.temperature);
+                    lv_label_set_text(env_temp_label, buf);
+                    snprintf(buf, sizeof(buf), "\xE6\xB9\xBF\xE5\xBA\xA6: %.1f %%", sensor.humidity);
+                    lv_label_set_text(env_humi_label, buf);
+                    snprintf(buf, sizeof(buf), "\xE6\xB0\x94\xE5\x8E\x8B: %.1f hPa", sensor.pressure);
+                    lv_label_set_text(env_press_label, buf);
+                    snprintf(buf, sizeof(buf), "\xE6\xB5\xB7\xE6\x8B\x94: %.1f m", sensor.altitude);
+                    lv_label_set_text(env_alti_label, buf);
+                }
+            }
         }
 
         robot_face_tick();
@@ -645,6 +686,40 @@ void asrStartTask(void *argument)
         osDelay(20);
     }
   /* USER CODE END asrStartTask */
+}
+
+/* USER CODE BEGIN Header_sensorStartTask */
+/**
+* @brief Function implementing the sensorTask thread.
+* @param argument: Not used
+* @retval None
+*/
+/* USER CODE END Header_sensorStartTask */
+void sensorStartTask(void *argument)
+{
+  /* USER CODE BEGIN sensorStartTask */
+    I2C_Bus_Init();
+    ATH20_Init();
+    BMP280_Init();
+
+    sensor_data_t data;
+
+    for (;;) {
+        /* ---- AHT20 温湿度 ---- */
+        uint32_t ct[2];
+        ATH20_Read_CTdata(ct);
+        data.temperature = (float)ct[1] * 200.0f / 1048576.0f - 50.0f;
+        data.humidity    = (float)ct[0] * 100.0f / 1048576.0f;
+
+        /* ---- BMP280 气压/海拔 ---- */
+        float bmp_temp;
+        BMP280GetData(&data.pressure, &bmp_temp, &data.altitude);
+
+        osMessageQueuePut(sensor_queueHandle, &data, 0, 0);
+
+        osDelay(2000);
+    }
+  /* USER CODE END sensorStartTask */
 }
 
 /* Private application code --------------------------------------------------*/
@@ -1102,7 +1177,7 @@ static void create_main_ui(void)
     /* 顶部标题 */
     lv_obj_t *title = lv_label_create(main_scr);
     lv_label_set_text(title, "\xE8\x8F\x9C\xE5\x8D\x95"); /* 菜单 */
-    lv_obj_set_style_text_font(title, &lv_font_cjk16, 0);
+    lv_obj_set_style_text_font(title, cjk16_font, 0);
     lv_obj_set_style_text_color(title, lv_color_hex(0x00ff41), 0);
     lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 10);
 
@@ -1120,7 +1195,7 @@ static void create_main_ui(void)
     lv_obj_center(icon1);
     lv_obj_t *txt1 = lv_label_create(main_scr);
     lv_label_set_text(txt1, "\xE7\xB3\xBB\xE7\xBB\x9F"); /* 系统 */
-    lv_obj_set_style_text_font(txt1, &lv_font_cjk16, 0);
+    lv_obj_set_style_text_font(txt1, cjk16_font, 0);
     lv_obj_set_style_text_color(txt1, lv_color_hex(0x00ff41), 0);
     lv_obj_align_to(txt1, btn1, LV_ALIGN_OUT_BOTTOM_MID, 0, 4);
     lv_obj_add_event_cb(btn1, main_to_system_handler, LV_EVENT_CLICKED, NULL);
@@ -1140,7 +1215,7 @@ static void create_main_ui(void)
     lv_obj_center(icon2);
     lv_obj_t *txt2 = lv_label_create(main_scr);
     lv_label_set_text(txt2, "\xE6\x97\xB6\xE9\x92\x9F"); /* 时钟 */
-    lv_obj_set_style_text_font(txt2, &lv_font_cjk16, 0);
+    lv_obj_set_style_text_font(txt2, cjk16_font, 0);
     lv_obj_set_style_text_color(txt2, lv_color_hex(0x00ff41), 0);
     lv_obj_align_to(txt2, btn2, LV_ALIGN_OUT_BOTTOM_MID, 0, 4);
     lv_obj_add_event_cb(btn2, main_to_clock_handler, LV_EVENT_CLICKED, NULL);
@@ -1160,7 +1235,7 @@ static void create_main_ui(void)
     lv_obj_center(icon3);
     lv_obj_t *txt3 = lv_label_create(main_scr);
     lv_label_set_text(txt3, "AI\xE5\xAF\xB9\xE8\xAF\x9D"); /* AI对话 */
-    lv_obj_set_style_text_font(txt3, &lv_font_cjk16, 0);
+    lv_obj_set_style_text_font(txt3, cjk16_font, 0);
     lv_obj_set_style_text_color(txt3, lv_color_hex(0x00ff41), 0);
     lv_obj_align_to(txt3, btn3, LV_ALIGN_OUT_BOTTOM_MID, 0, 4);
     lv_obj_add_event_cb(btn3, main_to_ai_handler, LV_EVENT_CLICKED, NULL);
@@ -1180,7 +1255,7 @@ static void create_main_ui(void)
     lv_obj_center(icon4);
     lv_obj_t *txt4 = lv_label_create(main_scr);
     lv_label_set_text(txt4, "\xE6\x97\xA5\xE5\x8E\x86"); /* 日历 */
-    lv_obj_set_style_text_font(txt4, &lv_font_cjk16, 0);
+    lv_obj_set_style_text_font(txt4, cjk16_font, 0);
     lv_obj_set_style_text_color(txt4, lv_color_hex(0x00ff41), 0);
     lv_obj_align_to(txt4, btn4, LV_ALIGN_OUT_BOTTOM_MID, 0, 4);
     lv_obj_add_event_cb(btn4, main_to_calendar_handler, LV_EVENT_CLICKED, NULL);
@@ -1200,7 +1275,7 @@ static void create_main_ui(void)
     lv_obj_center(icon5);
     lv_obj_t *txt5 = lv_label_create(main_scr);
     lv_label_set_text(txt5, "\xE7\x8E\xAF\xE5\xA2\x83"); /* 环境 */
-    lv_obj_set_style_text_font(txt5, &lv_font_cjk16, 0);
+    lv_obj_set_style_text_font(txt5, cjk16_font, 0);
     lv_obj_set_style_text_color(txt5, lv_color_hex(0x00ff41), 0);
     lv_obj_align_to(txt5, btn5, LV_ALIGN_OUT_BOTTOM_MID, 0, 4);
     lv_obj_add_event_cb(btn5, main_to_environment_handler, LV_EVENT_CLICKED, NULL);
@@ -1232,7 +1307,7 @@ static void create_system_ui(void)
     lv_obj_set_style_border_width(back_btn, 0, 0);
     lv_obj_t *back_label = lv_label_create(back_btn);
     lv_label_set_text(back_label, "\xE8\xBF\x94\xE5\x9B\x9E"); /* 返回 */
-    lv_obj_set_style_text_font(back_label, &lv_font_cjk16, 0);
+    lv_obj_set_style_text_font(back_label, cjk16_font, 0);
     lv_obj_set_style_text_color(back_label, lv_color_hex(0x00ff41), 0);
     lv_obj_center(back_label);
     lv_obj_add_event_cb(back_btn, back_click_handler, LV_EVENT_CLICKED, NULL);
@@ -1240,14 +1315,14 @@ static void create_system_ui(void)
     /* 标题 */
     lv_obj_t *title = lv_label_create(system_scr);
     lv_label_set_text(title, "\xE7\xB3\xBB\xE7\xBB\x9F"); /* 系统 */
-    lv_obj_set_style_text_font(title, &lv_font_cjk16, 0);
+    lv_obj_set_style_text_font(title, cjk16_font, 0);
     lv_obj_set_style_text_color(title, lv_color_hex(0x00ff41), 0);
     lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 10);
 
     /* 状态信息标签: 显示 ESP8266 初始化等实时状态 */
     status_info_label = lv_label_create(system_scr);
     lv_label_set_text(status_info_label, "\xE7\xAD\x89\xE5\xBE\x85\xE5\x88\x9D\xE5\xA7\x8B\xE5\x8C\x96..."); /* 等待初始化... */
-    lv_obj_set_style_text_font(status_info_label, &lv_font_cjk16, 0);
+    lv_obj_set_style_text_font(status_info_label, cjk16_font, 0);
     lv_obj_set_style_text_color(status_info_label, lv_color_hex(0x00ff41), 0);
     lv_obj_align(status_info_label, LV_ALIGN_CENTER, 0, -20);
 
@@ -1257,7 +1332,7 @@ static void create_system_ui(void)
                             "Freq: 168MHz\n"
                             "LCD: 320x240\n"
                             "FreeRTOS + LVGL");
-    lv_obj_set_style_text_font(info, &lv_font_cjk16, 0);
+    lv_obj_set_style_text_font(info, cjk16_font, 0);
     lv_obj_set_style_text_color(info, lv_color_hex(0x00ff41), 0);
     lv_obj_align(info, LV_ALIGN_BOTTOM_MID, 0, -20);
 }
@@ -1312,7 +1387,7 @@ static void create_clock_ui(void)
     lv_obj_set_style_border_width(back_btn, 0, 0);
     lv_obj_t *back_label = lv_label_create(back_btn);
     lv_label_set_text(back_label, "\xE8\xBF\x94\xE5\x9B\x9E"); /* 返回 */
-    lv_obj_set_style_text_font(back_label, &lv_font_cjk16, 0);
+    lv_obj_set_style_text_font(back_label, cjk16_font, 0);
     lv_obj_set_style_text_color(back_label, lv_color_hex(0x00ff41), 0);
     lv_obj_center(back_label);
     lv_obj_add_event_cb(back_btn, back_click_handler, LV_EVENT_CLICKED, NULL);
@@ -1320,7 +1395,7 @@ static void create_clock_ui(void)
     /* 标题 */
     lv_obj_t *title = lv_label_create(clock_scr);
     lv_label_set_text(title, "\xE6\x97\xB6\xE9\x92\x9F"); /* 时钟 */
-    lv_obj_set_style_text_font(title, &lv_font_cjk16, 0);
+    lv_obj_set_style_text_font(title, cjk16_font, 0);
     lv_obj_set_style_text_color(title, lv_color_hex(0x00ff41), 0);
     lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 10);
 
@@ -1489,7 +1564,7 @@ static void create_calendar_ui(void)
     lv_obj_set_style_border_width(back_btn, 0, 0);
     lv_obj_t *back_label = lv_label_create(back_btn);
     lv_label_set_text(back_label, "\xE8\xBF\x94\xE5\x9B\x9E"); /* 返回 */
-    lv_obj_set_style_text_font(back_label, &lv_font_cjk16, 0);
+    lv_obj_set_style_text_font(back_label, cjk16_font, 0);
     lv_obj_set_style_text_color(back_label, lv_color_hex(0x00ff41), 0);
     lv_obj_center(back_label);
     lv_obj_add_event_cb(back_btn, back_click_handler, LV_EVENT_CLICKED, NULL);
@@ -1497,7 +1572,7 @@ static void create_calendar_ui(void)
     /* 标题 */
     lv_obj_t *title = lv_label_create(calendar_scr);
     lv_label_set_text(title, "\xE6\x97\xA5\xE5\x8E\x86"); /* 日历 */
-    lv_obj_set_style_text_font(title, &lv_font_cjk16, 0);
+    lv_obj_set_style_text_font(title, cjk16_font, 0);
     lv_obj_set_style_text_color(title, lv_color_hex(0x00ff41), 0);
     lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 10);
 
@@ -1516,7 +1591,7 @@ static void create_calendar_ui(void)
 
     lv_obj_t *year_lbl = lv_label_create(calendar_scr);
     lv_label_set_text(year_lbl, "\xE5\xB9\xB4"); /* 年 */
-    lv_obj_set_style_text_font(year_lbl, &lv_font_cjk16, 0);
+    lv_obj_set_style_text_font(year_lbl, cjk16_font, 0);
     lv_obj_set_style_text_color(year_lbl, lv_color_hex(0x00ff41), 0);
     lv_obj_align(year_lbl, LV_ALIGN_TOP_MID, -8, 48);
 
@@ -1534,7 +1609,7 @@ static void create_calendar_ui(void)
 
     lv_obj_t *month_lbl = lv_label_create(calendar_scr);
     lv_label_set_text(month_lbl, "\xE6\x9C\x88"); /* 月 */
-    lv_obj_set_style_text_font(month_lbl, &lv_font_cjk16, 0);
+    lv_obj_set_style_text_font(month_lbl, cjk16_font, 0);
     lv_obj_set_style_text_color(month_lbl, lv_color_hex(0x00ff41), 0);
     lv_obj_align(month_lbl, LV_ALIGN_TOP_MID, 69, 48);
 
@@ -1544,7 +1619,7 @@ static void create_calendar_ui(void)
     for (int i = 0; i < 7; i++) {
         lv_obj_t *lbl = lv_label_create(calendar_scr);
         lv_label_set_text(lbl, wd[i]);
-        lv_obj_set_style_text_font(lbl, &lv_font_cjk16, 0);
+        lv_obj_set_style_text_font(lbl, cjk16_font, 0);
         lv_obj_set_style_text_color(lbl, lv_color_hex(0x00ff41), 0);
         lv_obj_align(lbl, LV_ALIGN_TOP_MID, (i - 3) * 35, 75);
     }
@@ -1565,35 +1640,6 @@ static void create_calendar_ui(void)
     cal_refresh();
 }
 
-static void env_timer_cb(lv_timer_t *timer)
-{
-    (void)timer;
-    if (lv_scr_act() != env_scr) return;
-    char buf[64];
-
-    /* ---- AHT20 温湿度 ---- */
-    uint32_t ct[2];
-    ATH20_Read_CTdata(ct);
-    float aht_temp = (float)ct[1] * 200.0f / 1048576.0f - 50.0f;
-    float aht_humi = (float)ct[0] * 100.0f / 1048576.0f;
-
-    snprintf(buf, sizeof(buf), "\xE6\xB8\xA9\xE5\xBA\xA6: %.1f \xE2\x84\x83", aht_temp);
-    lv_label_set_text(env_temp_label, buf);
-
-    snprintf(buf, sizeof(buf), "\xE6\xB9\xBF\xE5\xBA\xA6: %.1f %%", aht_humi);
-    lv_label_set_text(env_humi_label, buf);
-
-    /* ---- BMP280 气压/海拔 ---- */
-    float bmp_press, bmp_temp, bmp_asl;
-    BMP280GetData(&bmp_press, &bmp_temp, &bmp_asl);
-
-    snprintf(buf, sizeof(buf), "\xE6\xB0\x94\xE5\x8E\x8B: %.1f hPa", bmp_press);
-    lv_label_set_text(env_press_label, buf);
-
-    snprintf(buf, sizeof(buf), "\xE6\xB5\xB7\xE6\x8B\x94: %.1f m", bmp_asl);
-    lv_label_set_text(env_alti_label, buf);
-}
-
 static void create_environment_ui(void)
 {
     env_scr = lv_obj_create(NULL);
@@ -1607,7 +1653,7 @@ static void create_environment_ui(void)
     lv_obj_set_style_border_width(back_btn, 0, 0);
     lv_obj_t *back_label = lv_label_create(back_btn);
     lv_label_set_text(back_label, "\xE8\xBF\x94\xE5\x9B\x9E"); /* 返回 */
-    lv_obj_set_style_text_font(back_label, &lv_font_cjk16, 0);
+    lv_obj_set_style_text_font(back_label, cjk16_font, 0);
     lv_obj_set_style_text_color(back_label, lv_color_hex(0x00ff41), 0);
     lv_obj_center(back_label);
     lv_obj_add_event_cb(back_btn, back_click_handler, LV_EVENT_CLICKED, NULL);
@@ -1615,40 +1661,37 @@ static void create_environment_ui(void)
     /* 标题 */
     lv_obj_t *title = lv_label_create(env_scr);
     lv_label_set_text(title, "\xE7\x8E\xAF\xE5\xA2\x83"); /* 环境 */
-    lv_obj_set_style_text_font(title, &lv_font_cjk16, 0);
+    lv_obj_set_style_text_font(title, cjk16_font, 0);
     lv_obj_set_style_text_color(title, lv_color_hex(0x00ff41), 0);
     lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 10);
 
     /* 温度 */
     env_temp_label = lv_label_create(env_scr);
     lv_label_set_text(env_temp_label, "\xE6\xB8\xA9\xE5\xBA\xA6: --");
-    lv_obj_set_style_text_font(env_temp_label, &lv_font_cjk16, 0);
+    lv_obj_set_style_text_font(env_temp_label, cjk16_font, 0);
     lv_obj_set_style_text_color(env_temp_label, lv_color_hex(0x00ff41), 0);
     lv_obj_align(env_temp_label, LV_ALIGN_TOP_LEFT, 10, 50);
 
     /* 湿度 */
     env_humi_label = lv_label_create(env_scr);
     lv_label_set_text(env_humi_label, "\xE6\xB9\xBF\xE5\xBA\xA6: --");
-    lv_obj_set_style_text_font(env_humi_label, &lv_font_cjk16, 0);
+    lv_obj_set_style_text_font(env_humi_label, cjk16_font, 0);
     lv_obj_set_style_text_color(env_humi_label, lv_color_hex(0x00ff41), 0);
     lv_obj_align(env_humi_label, LV_ALIGN_TOP_LEFT, 10, 80);
 
     /* 气压 */
     env_press_label = lv_label_create(env_scr);
     lv_label_set_text(env_press_label, "\xE6\xB0\x94\xE5\x8E\x8B: --");
-    lv_obj_set_style_text_font(env_press_label, &lv_font_cjk16, 0);
+    lv_obj_set_style_text_font(env_press_label, cjk16_font, 0);
     lv_obj_set_style_text_color(env_press_label, lv_color_hex(0x00ff41), 0);
     lv_obj_align(env_press_label, LV_ALIGN_TOP_LEFT, 10, 110);
 
     /* 海拔 */
     env_alti_label = lv_label_create(env_scr);
     lv_label_set_text(env_alti_label, "\xE6\xB5\xB7\xE6\x8B\x94: --");
-    lv_obj_set_style_text_font(env_alti_label, &lv_font_cjk16, 0);
+    lv_obj_set_style_text_font(env_alti_label, cjk16_font, 0);
     lv_obj_set_style_text_color(env_alti_label, lv_color_hex(0x00ff41), 0);
     lv_obj_align(env_alti_label, LV_ALIGN_TOP_LEFT, 10, 140);
-
-    /* 每 2 秒刷新一次传感器数据 */
-    lv_timer_create(env_timer_cb, 2000, NULL);
 }
 
 /**
@@ -1743,7 +1786,7 @@ static void create_ai_ui(void)
     lv_obj_set_style_border_width(back_btn, 0, 0);
     lv_obj_t *back_label = lv_label_create(back_btn);
     lv_label_set_text(back_label, "\xE8\xBF\x94\xE5\x9B\x9E"); /* 返回 */
-    lv_obj_set_style_text_font(back_label, &lv_font_cjk16, 0);
+    lv_obj_set_style_text_font(back_label, cjk16_font, 0);
     lv_obj_set_style_text_color(back_label, lv_color_hex(0x00ff41), 0);
     lv_obj_center(back_label);
     lv_obj_add_event_cb(back_btn, back_click_handler, LV_EVENT_CLICKED, NULL);
@@ -1751,7 +1794,7 @@ static void create_ai_ui(void)
     /* 标题 */
     lv_obj_t *title = lv_label_create(ai_scr);
     lv_label_set_text(title, "AI \xE5\xAF\xB9\xE8\xAF\x9D"); /* AI 对话 */
-    lv_obj_set_style_text_font(title, &lv_font_cjk16, 0);
+    lv_obj_set_style_text_font(title, cjk16_font, 0);
     lv_obj_set_style_text_color(title, lv_color_hex(0x00ff41), 0);
     lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 10);
 
@@ -1759,7 +1802,7 @@ static void create_ai_ui(void)
     chat_input = lv_textarea_create(ai_scr);
     lv_obj_set_size(chat_input, 195, 36);
     lv_obj_align(chat_input, LV_ALIGN_TOP_MID, -15, 41);
-    lv_obj_set_style_text_font(chat_input, &lv_font_cjk16, 0);
+    lv_obj_set_style_text_font(chat_input, cjk16_font, 0);
     lv_textarea_set_max_length(chat_input, 128);
     lv_textarea_set_placeholder_text(chat_input, "\xE8\xBE\x93\xE5\x85\xA5\xE6\xB6\x88\xE6\x81\xAF..."); /* 输入消息... */
 
@@ -1770,7 +1813,7 @@ static void create_ai_ui(void)
     lv_obj_set_style_border_width(chat_send_btn, 0, 0);
     lv_obj_t *send_label = lv_label_create(chat_send_btn);
     lv_label_set_text(send_label, "\xE5\x8F\x91\xE9\x80\x81"); /* 发送 */
-    lv_obj_set_style_text_font(send_label, &lv_font_cjk16, 0);
+    lv_obj_set_style_text_font(send_label, cjk16_font, 0);
     lv_obj_set_style_text_color(send_label, lv_color_hex(0x00ff41), 0);
     lv_obj_center(send_label);
     lv_obj_add_event_cb(chat_send_btn, chat_send_handler, LV_EVENT_CLICKED, NULL);
@@ -1793,7 +1836,7 @@ static void create_ai_ui(void)
     /* 欢迎语：仅 UI 显示，不加入对话历史（避免以 assistant 开头发给 API 被拒） */
     lv_obj_t *welcome_label = lv_label_create(chat_list);
     lv_label_set_text(welcome_label, "AI: \xE4\xBD\xA0\xE5\xA5\xBD\xEF\xBC\x8C\xE6\x88\x91\xE6\x98\xAF AI \xE5\x8A\xA9\xE6\x89\x8B"); /* AI: 你好，我是 AI 助手 */
-    lv_obj_set_style_text_font(welcome_label, &lv_font_cjk16, 0);
+    lv_obj_set_style_text_font(welcome_label, cjk16_font, 0);
     lv_obj_set_style_text_color(welcome_label, lv_color_hex(0xcccccc), 0);
     lv_label_set_long_mode(welcome_label, LV_LABEL_LONG_WRAP);
     lv_obj_set_width(welcome_label, 220);
@@ -1845,7 +1888,7 @@ static void create_ai_ui(void)
         lv_obj_set_style_border_width(ime_btns[i], 0, 0);
         ime_lbls[i] = lv_label_create(ime_btns[i]);
         lv_label_set_text(ime_lbls[i], "");
-        lv_obj_set_style_text_font(ime_lbls[i], &lv_font_cjk16, 0);
+        lv_obj_set_style_text_font(ime_lbls[i], cjk16_font, 0);
         lv_obj_set_style_text_color(ime_lbls[i], lv_color_white(), 0);
         lv_obj_center(ime_lbls[i]);
         lv_obj_add_event_cb(ime_btns[i], ime_cand_handler, LV_EVENT_CLICKED, NULL);
@@ -1964,7 +2007,7 @@ static void chat_ui_update(void)
         }
         lv_obj_t *label = lv_label_create(chat_list);
         lv_label_set_text(label, disp);
-        lv_obj_set_style_text_font(label, &lv_font_cjk16, 0);
+        lv_obj_set_style_text_font(label, cjk16_font, 0);
         lv_label_set_long_mode(label, LV_LABEL_LONG_WRAP);
         lv_obj_set_width(label, 220);
         if (strcmp(chat_history[i].role, "user") == 0) {

@@ -67,3 +67,8 @@ ai_project\main.o: ../MALLOC/malloc.h
 ai_project\main.o: ../TEXT/fontupd.h
 ai_project\main.o: ../TEXT/text.h
 ai_project\main.o: ../HARDWARE/IIC/myiic.h
+ai_project\main.o: ../HARDWARE/../HARDWARE/SDIO/sdio_sdcard.h
+ai_project\main.o: ../HARDWARE/../FATFS/exfuns/exfuns.h
+ai_project\main.o: ../FATFS/src/ff.h
+ai_project\main.o: ../FATFS/src/integer.h
+ai_project\main.o: ../FATFS/src/ffconf.h

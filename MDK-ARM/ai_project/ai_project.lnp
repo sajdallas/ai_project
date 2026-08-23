@@ -186,6 +186,7 @@
 "ai_project\ff.o"
 "ai_project\exfuns.o"
 "ai_project\mycc936.o"
+"ai_project\lv_font_cjk16_sd.o"
 --strict --scatter "ai_project\ai_project.sct"
 --summary_stderr --info summarysizes --map --load_addr_map_info --xref --callgraph --symbols
 --info sizes --info totals --info unused --info veneers

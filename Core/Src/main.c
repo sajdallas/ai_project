@@ -36,6 +36,8 @@
 #include "fontupd.h"
 #include "text.h"
 #include "myiic.h"
+#include "../HARDWARE/SDIO/sdio_sdcard.h"
+#include "../FATFS/exfuns/exfuns.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -113,7 +115,7 @@ int main(void)
   LCD_Init();                    // 初始化LCD（会自动识别LCD ID并配置）
 
   // ====== 初始化触摸屏 ======
-  tp_dev.init();                 // 初始化触摸屏（电阻/电容自动检测）
+    tp_dev.init();                 // 初始化触摸屏（电阻/电容自动检测）
     my_mem_init(SRAMIN);        // 初始化内部内存池
     exfuns_init();              // 挂载 FATFS 文件系统
   /* USER CODE END 2 */

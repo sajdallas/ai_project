@@ -2119,6 +2119,11 @@
               <FileType>1</FileType>
               <FilePath>..\FATFS\exfuns\mycc936.c</FilePath>
             </File>
+            <File>
+              <FileName>lv_font_cjk16_sd.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\LVGL\src\font\lv_font_cjk16_sd.c</FilePath>
+            </File>
           </Files>
         </Group>
         <Group>
