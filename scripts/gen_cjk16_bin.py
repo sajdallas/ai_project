@@ -187,7 +187,7 @@ def find_array_start(lines, name):
 
 def main():
     font_c_path = os.path.join(os.path.dirname(__file__), '..', 'LVGL', 'src', 'font', 'lv_font_cjk16.c')
-    output_path = os.path.join(os.path.dirname(__file__), '..', 'cjk16_font.bin')
+    output_path = os.path.join(os.path.dirname(__file__), '..', 'tools', 'font', 'cjk16_font.bin')
 
     if not os.path.exists(font_c_path):
         print(f"Error: {font_c_path} not found")

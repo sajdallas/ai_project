@@ -30,6 +30,7 @@
 #include "lcd.h"
 #include "touch.h"
 #include "lvgl.h"
+#include "led_breath.h"
 
 LV_FONT_DECLARE(lv_font_cjk16);
 static const lv_font_t *cjk16_font;
@@ -41,6 +42,7 @@ static const lv_font_t *cjk16_font;
 #include "../HARDWARE/ROBOT_FACE/robot_face_anim.h"
 #include "../HARDWARE/aht20_bmp280/ATH20.h"
 #include "../HARDWARE/aht20_bmp280/BMP280.h"
+#include "../HARDWARE/WEB_SERVER/web_server.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -60,6 +62,14 @@ typedef struct {
     esp_msg_type_t type;
     char text[128];
 } esp_msg_t;
+
+typedef enum {
+    WIFI_UI_READY,
+    WIFI_UI_NO_CONFIG,
+    WIFI_UI_CONNECTING,
+    WIFI_UI_CONNECTED,
+    WIFI_UI_FAILED,
+} wifi_ui_state_t;
 
 /* ---- 传感器数据 ---- */
 typedef struct {
@@ -86,6 +96,22 @@ static lv_obj_t *chat_send_btn;      /* 发送按钮 */
 static lv_obj_t *kb;                 /* 虚拟键盘 */
 static volatile int chat_pending = 0;/* 1=等待 AI 回复 */
 static volatile int wifi_connected = 0;  /* 1=WiFi 已连接 */
+static volatile int wifi_reconnect_requested = 0;
+static volatile int wifi_save_requested = 0;
+static volatile int wifi_ui_busy = 0;
+static volatile wifi_ui_state_t wifi_ui_state = WIFI_UI_READY;
+static char wifi_ssid[32] = "";
+static char wifi_pwd[64] = "";
+
+#define WIFI_SCAN_MAX 5
+static char wifi_scan_ssids[WIFI_SCAN_MAX][32];
+static lv_obj_t *wifi_scr;
+static lv_obj_t *wifi_status_label;
+static lv_obj_t *wifi_ssid_ta;
+static lv_obj_t *wifi_pwd_ta;
+static lv_obj_t *wifi_scan_btns[WIFI_SCAN_MAX];
+static lv_obj_t *wifi_scan_labels[WIFI_SCAN_MAX];
+static lv_obj_t *wifi_kb;
 
 /* ---- 拼音输入法候选栏 ---- */
 #define IME_MAX_CAND 6                  /* 候选栏每页最多显示的候选字数 */
@@ -103,7 +129,7 @@ static int  ime_all_plen[512];            /* 全部候选字拼音长度 */
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
 #define AI_URL "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"
-#define AI_KEY "sk-ws-H.EPLHEIP.hWXu.MEYCIQDytiueAUS-gKpkG1X7QQ9DxoDTPCFth471SALe1gZnjgIhAJFrKg4RZ9edeHxWVbypeJmRSSaAmhASte47U3XpsJ0R"
+#include "ai_secrets.h"
 #define AI_MODEL "qwen3.8-max"
 #define AI_SYSTEM_PROMPT "Reply in concise Chinese. Do not use emoji, emoticons, markdown symbols, or special symbols."
 /* USER CODE END PD */
@@ -183,6 +209,7 @@ const osMessageQueueAttr_t sensor_queue_attributes = {
 static void create_main_ui(void);
 static void create_robot_face(void);
 static void create_system_ui(void);
+static void create_wifi_ui(void);
 static void create_clock_ui(void);
 static void create_calendar_ui(void);
 static void create_environment_ui(void);
@@ -190,6 +217,11 @@ static void main_to_clock_handler(lv_event_t *e);
 static void main_to_calendar_handler(lv_event_t *e);
 static void main_to_environment_handler(lv_event_t *e);
 static void create_ai_ui(void);
+static void system_to_wifi_handler(lv_event_t *e);
+static void wifi_scan_handler(lv_event_t *e);
+static void wifi_connect_handler(lv_event_t *e);
+static void wifi_ap_select_handler(lv_event_t *e);
+static void wifi_textarea_click_handler(lv_event_t *e);
 
 static lv_obj_t *idle_scr;
 static lv_obj_t *main_scr;
@@ -210,6 +242,8 @@ static void esp_log_update_last(const char *text);
 static void esp_log_ai(const char *text);
 static void extract_content(const char *resp, char *out, int out_sz);
 static void sanitize_ai_text(char *dst, int dst_sz, const char *src);
+static int wifi_config_load(void);
+static int wifi_config_save(void);
 
 static void chat_add_message(const char *role, const char *content);
 static void chat_send_to_ai(const char *user_msg);
@@ -315,12 +349,13 @@ void StartDefaultTask(void *argument)
 {
   /* USER CODE BEGIN StartDefaultTask */
   /* Infinite loop */
-  for(;;)
-  {
-    HAL_GPIO_TogglePin(GPIOA, GPIO_PIN_7);
+    LED_Breath_Init();
+    for (;;)
+    {
+        //LED_Breath_Update(1000);
 
-    osDelay(500);
-  }
+        osDelay(20);
+    }
   /* USER CODE END StartDefaultTask */
 }
 
@@ -341,6 +376,7 @@ void lvglStartTask(void *argument)
     cjk16_font = &lv_font_cjk16;
     create_robot_face();
     create_system_ui();
+    create_wifi_ui();
     create_clock_ui();
     create_calendar_ui();
     create_ai_ui();
@@ -357,6 +393,7 @@ void lvglStartTask(void *argument)
     char status_buf[512] = "";
     int status_line = 0;
     char ai_buf[512];
+    wifi_ui_state_t last_wifi_ui_state = WIFI_UI_READY;
 
     /* 表情状态计时器：用于自动恢复到 IDLE */
     uint32_t face_state_timer = 0;
@@ -378,7 +415,29 @@ void lvglStartTask(void *argument)
                 status_line++;
             }
             if (status_info_label != NULL) {
-                lv_label_set_text(status_info_label, status_buf);
+                lv_textarea_set_text(status_info_label, status_buf);
+                lv_obj_scroll_to_y(status_info_label, LV_COORD_MAX, LV_ANIM_OFF);
+            }
+        }
+
+        if (wifi_status_label != NULL && last_wifi_ui_state != wifi_ui_state) {
+            last_wifi_ui_state = wifi_ui_state;
+            switch (last_wifi_ui_state) {
+            case WIFI_UI_NO_CONFIG:
+                lv_label_set_text(wifi_status_label, "No config");
+                break;
+            case WIFI_UI_CONNECTING:
+                lv_label_set_text(wifi_status_label, "Connecting...");
+                break;
+            case WIFI_UI_CONNECTED:
+                lv_label_set_text(wifi_status_label, "Connected");
+                break;
+            case WIFI_UI_FAILED:
+                lv_label_set_text(wifi_status_label, "Failed");
+                break;
+            default:
+                lv_label_set_text(wifi_status_label, "Ready");
+                break;
             }
         }
 
@@ -571,30 +630,73 @@ void esp8266StartTask(void *argument)
     char req[256];
     static char json[8192];
     uint32_t next_sync_retry_tick = 0;
+    int wifi_cfg_loaded;
+    int auto_connect_tried = 0;
+
+    wifi_cfg_loaded = wifi_config_load();
+    if (!wifi_cfg_loaded) {
+        wifi_ui_state = WIFI_UI_NO_CONFIG;
+        esp_log("WiFi not set");
+    } else {
+        esp_log("WiFi config loaded");
+    }
 
     /* 初始化 + 连接 WiFi，失败则重试 */
     while (!wifi_connected) {
+        if (wifi_ssid[0] == '\0') {
+            if (!auto_connect_tried) {
+                auto_connect_tried = 1;
+                wifi_ui_state = WIFI_UI_CONNECTING;
+                esp_log("WiFi auto connect");
+                ESP_Init();
+                osDelay(2000);
+                status = ESP_AutoConnectSavedAP();
+                if (status == ESP_OK) {
+                    wifi_connected = 1;
+                    wifi_ui_state = WIFI_UI_CONNECTED;
+                    esp_log("WiFi\xE8\xBF\x9E\xE6\x8E\xA5\xE6\x88\x90\xE5\x8A\x9F"); /* WiFi连接成功 */
+                    break;
+                }
+                esp_log("WiFi auto connect failed");
+            }
+            wifi_ui_state = WIFI_UI_NO_CONFIG;
+            osDelay(1000);
+            continue;
+        }
+
+        wifi_ui_state = WIFI_UI_CONNECTING;
         esp_log("\xE6\xAD\xA3\xE5\x9C\xA8\xE5\x88\x9D\xE5\xA7\x8B\xE5\x8C\x96" "ESP8266..."); /* 正在初始化ESP8266... */
         ESP_Init();
         osDelay(2000);
 
         status = ESP_SendCmd("AT\r\n", "OK", 2000);
         if (status != ESP_OK) {
-            esp_log("AT\xE9\x80\x9A\xE8\xAE\xAF\xE5\xA4\xB1\xE8\xB4\xA5\xEF\xBC\x8C" "5\xE7\xA7\x92\xE5\x90\x8E\xE9\x87\x8D\xE8\xAF\x95..."); /* AT通讯失败，5秒后重试... */
+            wifi_ui_state = WIFI_UI_FAILED;
+            esp_log("AT\xE9\x80\x9A\xE4\xBF\xA1\xE5\xA4\xB1\xE8\xB4\xA5\xEF\xBC\x8C" "5\xE7\xA7\x92\xE5\x90\x8E\xE9\x87\x8D\xE8\xAF\x95..."); /* AT通信失败，5秒后重试... */
             osDelay(5000);
             continue;
         }
-        esp_log("AT\xE9\x80\x9A\xE8\xAE\xAF\xE6\xAD\xA3\xE5\xB8\xB8"); /* AT通讯正常 */
+        esp_log("AT\xE9\x80\x9A\xE4\xBF\xA1\xE6\xAD\xA3\xE5\xB8\xB8"); /* AT通信正常 */
 
         esp_log("\xE6\xAD\xA3\xE5\x9C\xA8\xE8\xBF\x9E\xE6\x8E\xA5WiFi..."); /* 正在连接WiFi... */
-        status = ESP_ConnectAP("HUAWEI-1FKZ9T", "FSNH82502");
+        status = ESP_ConnectAP(wifi_ssid, wifi_pwd);
         if (status != ESP_OK) {
+            wifi_ui_state = WIFI_UI_FAILED;
             esp_log("WiFi\xE8\xBF\x9E\xE6\x8E\xA5\xE5\xA4\xB1\xE8\xB4\xA5\xEF\xBC\x8C" "5\xE7\xA7\x92\xE5\x90\x8E\xE9\x87\x8D\xE8\xAF\x95..."); /* WiFi连接失败，5秒后重试... */
             osDelay(5000);
             continue;
         }
 
         wifi_connected = 1;
+        if (wifi_save_requested) {
+            if (wifi_config_save()) {
+                esp_log("WiFi config saved");
+            } else {
+                esp_log("WiFi config save fail");
+            }
+            wifi_save_requested = 0;
+        }
+        wifi_ui_state = WIFI_UI_CONNECTED;
         esp_log("WiFi\xE8\xBF\x9E\xE6\x8E\xA5\xE6\x88\x90\xE5\x8A\x9F"); /* WiFi连接成功 */
     }
 
@@ -606,21 +708,70 @@ void esp8266StartTask(void *argument)
         esp_log("\xE6\x97\xB6\xE9\x92\x9F\xE5\x90\x8C\xE6\xAD\xA5\xE4\xB8\xAD..."); /* 时钟同步中... */
         if (esp_try_sync_time_once()) {
             esp_log_update_last("\xE6\x97\xB6\xE9\x92\x9F\xE5\x90\x8C\xE6\xAD\xA5\xE6\x88\x90\xE5\x8A\x9F"); /* 时钟同步成功 */
+            {
+                char ip_buf[32];
+                if (ESP_SendCmd("AT+CIFSR\r\n", "OK", 2000) == ESP_OK) {
+                    const char *rx = ESP_GetRxBuf();
+                    const char *p = strstr(rx, "STAIP,\"");
+                    if (p) {
+                        p += 7;
+                        int i = 0;
+                        while (p[i] && p[i] != '"' && i < 31) { ip_buf[i] = p[i]; i++; }
+                        ip_buf[i] = '\0';
+                        esp_log(ip_buf);
+                    }
+                }
+            }
         } else {
             esp_log_update_last("\xE6\x97\xB6\xE9\x92\x9F\xE5\x90\x8C\xE6\xAD\xA5\xE5\xA4\xB1\xE8\xB4\xA5\xEF\xBC\x8C\xE7\xA8\x8D\xE5\x90\x8E\xE9\x87\x8D\xE8\xAF\x95"); /* 时钟同步失败，稍后重试 */
             next_sync_retry_tick = HAL_GetTick() + RTC_SYNC_RETRY_MS;
         }
     }
 
+    WebServer_Start();
+
     for (;;) {
+        if (wifi_reconnect_requested) {
+            wifi_reconnect_requested = 0;
+            wifi_connected = 0;
+            ESP_SendCmd("AT+CWQAP\r\n", "OK", 1000);
+            wifi_ui_state = WIFI_UI_CONNECTING;
+            esp_log("WiFi reconnect");
+        }
+
+        if (wifi_ui_busy) {
+            osDelay(200);
+            continue;
+        }
+
         /* 断网则自动重连 */
         if (!wifi_connected) {
+            if (wifi_ssid[0] == '\0') {
+                wifi_ui_state = WIFI_UI_NO_CONFIG;
+                osDelay(5000);
+                continue;
+            }
+
+            wifi_ui_state = WIFI_UI_CONNECTING;
             ESP_Init();
             osDelay(2000);
-            status = ESP_ConnectAP("HUAWEI-1FKZ9T", "FSNH82502");
+            status = ESP_ConnectAP(wifi_ssid, wifi_pwd);
             if (status == ESP_OK) {
                 wifi_connected = 1;
+                if (wifi_save_requested) {
+                    if (wifi_config_save()) {
+                        esp_log("WiFi config saved");
+                    } else {
+                        esp_log("WiFi config save fail");
+                    }
+                    wifi_save_requested = 0;
+                }
+                wifi_ui_state = WIFI_UI_CONNECTED;
+                esp_log("WiFi\xE8\xBF\x9E\xE6\x8E\xA5\xE6\x88\x90\xE5\x8A\x9F"); /* WiFi连接成功 */
+                WebServer_Start();
             } else {
+                wifi_ui_state = WIFI_UI_FAILED;
+                esp_log("WiFi connect failed");
                 osDelay(10000);
             }
             continue;
@@ -628,16 +779,33 @@ void esp8266StartTask(void *argument)
 
         /* 等待 AI 对话请求 */
         if (!rtc_synced && (int32_t)(HAL_GetTick() - next_sync_retry_tick) >= 0) {
+            WebServer_Stop();
             esp_log_update_last("\xE6\xAD\xA3\xE5\x9C\xA8\xE9\x87\x8D\xE8\xAF\x95\xE5\x90\x8C\xE6\xAD\xA5\xE6\x97\xB6\xE9\x92\x9F..."); /* 正在重试同步时钟... */
             if (esp_try_sync_time_once()) {
                 esp_log_update_last("\xE6\x97\xB6\xE9\x92\x9F\xE5\x90\x8C\xE6\xAD\xA5\xE6\x88\x90\xE5\x8A\x9F"); /* 时钟同步成功 */
+                {
+                    char ip_buf[32];
+                    if (ESP_SendCmd("AT+CIFSR\r\n", "OK", 2000) == ESP_OK) {
+                        const char *rx = ESP_GetRxBuf();
+                        const char *p = strstr(rx, "STAIP,\"");
+                        if (p) {
+                            p += 7;
+                            int i = 0;
+                            while (p[i] && p[i] != '"' && i < 31) { ip_buf[i] = p[i]; i++; }
+                            ip_buf[i] = '\0';
+                            esp_log(ip_buf);
+                        }
+                    }
+                }
             } else {
                 esp_log_update_last("\xE6\x97\xB6\xE9\x92\x9F\xE5\x90\x8C\xE6\xAD\xA5\xE5\xA4\xB1\xE8\xB4\xA5\xEF\xBC\x8C\xE7\xA8\x8D\xE5\x90\x8E\xE9\x87\x8D\xE8\xAF\x95"); /* 时钟同步失败，稍后重试 */
                 next_sync_retry_tick = HAL_GetTick() + RTC_SYNC_RETRY_MS;
             }
+            WebServer_Start();
         }
 
         if (osMessageQueueGet(esp_ai_req_queueHandle, req, NULL, 1000) == osOK) {
+            WebServer_Stop();
             chat_build_json(json, (int)sizeof(json));
 
             status = ESP_HTTPPostAuth(AI_URL, json, AI_KEY, http_resp, (uint16_t)sizeof(http_resp));
@@ -660,7 +828,10 @@ void esp8266StartTask(void *argument)
                 esp_log_ai(b);
                 wifi_connected = 0;
             }
+            WebServer_Start();
         }
+
+        WebServer_Poll();
     }
   /* USER CODE END esp8266StartTask */
 }
@@ -715,6 +886,12 @@ void sensorStartTask(void *argument)
         float bmp_temp;
         BMP280GetData(&data.pressure, &bmp_temp, &data.altitude);
 
+        g_web_sensor.temperature = data.temperature;
+        g_web_sensor.humidity    = data.humidity;
+        g_web_sensor.pressure    = data.pressure;
+        g_web_sensor.altitude    = data.altitude;
+        g_web_sensor.update_tick = HAL_GetTick();
+
         osMessageQueuePut(sensor_queueHandle, &data, 0, 0);
 
         osDelay(2000);
@@ -747,6 +924,18 @@ static void esp_log_ai(const char *text)
     char buf[512];
     sanitize_ai_text(buf, (int)sizeof(buf), text);
     osMessageQueuePut(esp_ai_queueHandle, buf, 0, 100);
+}
+
+static int wifi_config_load(void)
+{
+    wifi_ssid[0] = '\0';
+    wifi_pwd[0] = '\0';
+    return 0;
+}
+
+static int wifi_config_save(void)
+{
+    return 1;
 }
 
 static int hex_val(char c)
@@ -938,6 +1127,79 @@ static void main_to_calendar_handler(lv_event_t *e)
 static void main_to_environment_handler(lv_event_t *e)
 {
     lv_scr_load(env_scr);
+}
+
+static void system_to_wifi_handler(lv_event_t *e)
+{
+    (void)e;
+    lv_textarea_set_text(wifi_ssid_ta, wifi_ssid);
+    lv_textarea_set_text(wifi_pwd_ta, wifi_pwd);
+    lv_scr_load(wifi_scr);
+}
+
+static void wifi_textarea_click_handler(lv_event_t *e)
+{
+    lv_obj_t *ta = lv_event_get_target(e);
+    lv_keyboard_set_textarea(wifi_kb, ta);
+    lv_obj_clear_flag(wifi_kb, LV_OBJ_FLAG_HIDDEN);
+}
+
+static void wifi_ap_select_handler(lv_event_t *e)
+{
+    uintptr_t idx = (uintptr_t)lv_event_get_user_data(e);
+    if (idx < WIFI_SCAN_MAX && wifi_scan_ssids[idx][0] != '\0') {
+        lv_textarea_set_text(wifi_ssid_ta, wifi_scan_ssids[idx]);
+        lv_label_set_text(wifi_status_label, "SSID selected");
+    }
+}
+
+static void wifi_scan_handler(lv_event_t *e)
+{
+    (void)e;
+    int n;
+
+    lv_label_set_text(wifi_status_label, "Scanning...");
+    wifi_ui_busy = 1;
+    n = ESP_ScanAP(wifi_scan_ssids, WIFI_SCAN_MAX);
+    wifi_ui_busy = 0;
+
+    if (n <= 0) {
+        lv_label_set_text(wifi_status_label, "Scan failed");
+        for (int i = 0; i < WIFI_SCAN_MAX; i++) {
+            wifi_scan_ssids[i][0] = '\0';
+            lv_label_set_text(wifi_scan_labels[i], "-");
+        }
+        return;
+    }
+
+    lv_label_set_text(wifi_status_label, "Scan done");
+    for (int i = 0; i < WIFI_SCAN_MAX; i++) {
+        if (i < n) {
+            lv_label_set_text(wifi_scan_labels[i], wifi_scan_ssids[i]);
+        } else {
+            wifi_scan_ssids[i][0] = '\0';
+            lv_label_set_text(wifi_scan_labels[i], "-");
+        }
+    }
+}
+
+static void wifi_connect_handler(lv_event_t *e)
+{
+    (void)e;
+    snprintf(wifi_ssid, sizeof(wifi_ssid), "%s", lv_textarea_get_text(wifi_ssid_ta));
+    snprintf(wifi_pwd, sizeof(wifi_pwd), "%s", lv_textarea_get_text(wifi_pwd_ta));
+
+    if (wifi_ssid[0] == '\0') {
+        lv_label_set_text(wifi_status_label, "SSID required");
+        return;
+    }
+
+    wifi_connected = 0;
+    wifi_reconnect_requested = 1;
+    wifi_save_requested = 1;
+    lv_obj_add_flag(wifi_kb, LV_OBJ_FLAG_HIDDEN);
+    lv_label_set_text(wifi_status_label, "Connecting...");
+    esp_log("WiFi connecting...");
 }
 
 static void main_idle_timer_cb(lv_timer_t *timer)
@@ -1319,12 +1581,30 @@ static void create_system_ui(void)
     lv_obj_set_style_text_color(title, lv_color_hex(0x00ff41), 0);
     lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 10);
 
-    /* 状态信息标签: 显示 ESP8266 初始化等实时状态 */
-    status_info_label = lv_label_create(system_scr);
-    lv_label_set_text(status_info_label, "\xE7\xAD\x89\xE5\xBE\x85\xE5\x88\x9D\xE5\xA7\x8B\xE5\x8C\x96..."); /* 等待初始化... */
+    /* 状态信息框: 显示 ESP8266 初始化等实时状态 */
+    status_info_label = lv_textarea_create(system_scr);
+    lv_obj_set_size(status_info_label, 215, 92);
+    lv_obj_align(status_info_label, LV_ALIGN_TOP_MID, 0, 45);
+    lv_textarea_set_text(status_info_label, "\xE7\xAD\x89\xE5\xBE\x85\xE5\x88\x9D\xE5\xA7\x8B\xE5\x8C\x96..."); /* 等待初始化... */
+    lv_textarea_set_cursor_click_pos(status_info_label, false);
+    lv_obj_set_style_bg_color(status_info_label, lv_color_hex(0x050805), 0);
+    lv_obj_set_style_border_color(status_info_label, lv_color_hex(0x00ff41), 0);
+    lv_obj_set_style_border_width(status_info_label, 1, 0);
+    lv_obj_set_style_pad_all(status_info_label, 5, 0);
     lv_obj_set_style_text_font(status_info_label, cjk16_font, 0);
     lv_obj_set_style_text_color(status_info_label, lv_color_hex(0x00ff41), 0);
-    lv_obj_align(status_info_label, LV_ALIGN_CENTER, 0, -20);
+
+    lv_obj_t *wifi_btn = lv_btn_create(system_scr);
+    lv_obj_set_size(wifi_btn, 60, 30);
+    lv_obj_align(wifi_btn, LV_ALIGN_TOP_RIGHT, -5, 5);
+    lv_obj_set_style_bg_color(wifi_btn, lv_color_hex(0x0d2818), 0);
+    lv_obj_set_style_border_width(wifi_btn, 0, 0);
+    lv_obj_t *wifi_lbl = lv_label_create(wifi_btn);
+    lv_label_set_text(wifi_lbl, "WiFi");
+    lv_obj_set_style_text_font(wifi_lbl, cjk16_font, 0);
+    lv_obj_set_style_text_color(wifi_lbl, lv_color_hex(0x00ff41), 0);
+    lv_obj_center(wifi_lbl);
+    lv_obj_add_event_cb(wifi_btn, system_to_wifi_handler, LV_EVENT_CLICKED, NULL);
 
     /* 硬件信息标签 */
     lv_obj_t *info = lv_label_create(system_scr);
@@ -1335,6 +1615,101 @@ static void create_system_ui(void)
     lv_obj_set_style_text_font(info, cjk16_font, 0);
     lv_obj_set_style_text_color(info, lv_color_hex(0x00ff41), 0);
     lv_obj_align(info, LV_ALIGN_BOTTOM_MID, 0, -20);
+}
+
+static void create_wifi_ui(void)
+{
+    wifi_scr = lv_obj_create(NULL);
+    lv_obj_set_style_bg_color(wifi_scr, lv_color_hex(0x0a0a0a), 0);
+
+    lv_obj_t *back_btn = lv_btn_create(wifi_scr);
+    lv_obj_set_size(back_btn, 54, 26);
+    lv_obj_align(back_btn, LV_ALIGN_TOP_LEFT, 5, 5);
+    lv_obj_set_style_bg_color(back_btn, lv_color_hex(0x0d2818), 0);
+    lv_obj_set_style_border_width(back_btn, 0, 0);
+    lv_obj_t *back_label = lv_label_create(back_btn);
+    lv_label_set_text(back_label, "Back");
+    lv_obj_set_style_text_font(back_label, cjk16_font, 0);
+    lv_obj_set_style_text_color(back_label, lv_color_hex(0x00ff41), 0);
+    lv_obj_center(back_label);
+    lv_obj_add_event_cb(back_btn, back_click_handler, LV_EVENT_CLICKED, NULL);
+
+    lv_obj_t *title = lv_label_create(wifi_scr);
+    lv_label_set_text(title, "WiFi");
+    lv_obj_set_style_text_font(title, &lv_font_montserrat_16, 0);
+    lv_obj_set_style_text_color(title, lv_color_hex(0x00ff41), 0);
+    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 9);
+
+    wifi_status_label = lv_label_create(wifi_scr);
+    lv_label_set_text(wifi_status_label, "Ready");
+    lv_obj_set_style_text_font(wifi_status_label, cjk16_font, 0);
+    lv_obj_set_style_text_color(wifi_status_label, lv_color_hex(0x00ff41), 0);
+    lv_obj_align(wifi_status_label, LV_ALIGN_TOP_MID, 0, 205);
+
+    wifi_ssid_ta = lv_textarea_create(wifi_scr);
+    lv_obj_set_size(wifi_ssid_ta, 140, 30);
+    lv_obj_align(wifi_ssid_ta, LV_ALIGN_TOP_LEFT, 8, 38);
+    lv_textarea_set_one_line(wifi_ssid_ta, true);
+    lv_textarea_set_max_length(wifi_ssid_ta, 31);
+    lv_textarea_set_placeholder_text(wifi_ssid_ta, "SSID");
+    lv_obj_set_style_text_font(wifi_ssid_ta, cjk16_font, 0);
+    lv_obj_add_event_cb(wifi_ssid_ta, wifi_textarea_click_handler, LV_EVENT_CLICKED, NULL);
+
+    wifi_pwd_ta = lv_textarea_create(wifi_scr);
+    lv_obj_set_size(wifi_pwd_ta, 140, 30);
+    lv_obj_align(wifi_pwd_ta, LV_ALIGN_TOP_LEFT, 8, 72);
+    lv_textarea_set_one_line(wifi_pwd_ta, true);
+    lv_textarea_set_password_mode(wifi_pwd_ta, true);
+    lv_textarea_set_max_length(wifi_pwd_ta, 63);
+    lv_textarea_set_placeholder_text(wifi_pwd_ta, "PWD");
+    lv_obj_set_style_text_font(wifi_pwd_ta, cjk16_font, 0);
+    lv_obj_add_event_cb(wifi_pwd_ta, wifi_textarea_click_handler, LV_EVENT_CLICKED, NULL);
+
+    lv_obj_t *scan_btn = lv_btn_create(wifi_scr);
+    lv_obj_set_size(scan_btn, 72, 30);
+    lv_obj_align(scan_btn, LV_ALIGN_TOP_RIGHT, -8, 38);
+    lv_obj_set_style_bg_color(scan_btn, lv_color_hex(0x0d2818), 0);
+    lv_obj_set_style_border_width(scan_btn, 0, 0);
+    lv_obj_t *scan_lbl = lv_label_create(scan_btn);
+    lv_label_set_text(scan_lbl, "Scan");
+    lv_obj_set_style_text_font(scan_lbl, cjk16_font, 0);
+    lv_obj_set_style_text_color(scan_lbl, lv_color_hex(0x00ff41), 0);
+    lv_obj_center(scan_lbl);
+    lv_obj_add_event_cb(scan_btn, wifi_scan_handler, LV_EVENT_CLICKED, NULL);
+
+    lv_obj_t *conn_btn = lv_btn_create(wifi_scr);
+    lv_obj_set_size(conn_btn, 72, 30);
+    lv_obj_align(conn_btn, LV_ALIGN_TOP_RIGHT, -8, 72);
+    lv_obj_set_style_bg_color(conn_btn, lv_color_hex(0x0d2818), 0);
+    lv_obj_set_style_border_width(conn_btn, 0, 0);
+    lv_obj_t *conn_lbl = lv_label_create(conn_btn);
+    lv_label_set_text(conn_lbl, "Connect");
+    lv_obj_set_style_text_font(conn_lbl, cjk16_font, 0);
+    lv_obj_set_style_text_color(conn_lbl, lv_color_hex(0x00ff41), 0);
+    lv_obj_center(conn_lbl);
+    lv_obj_add_event_cb(conn_btn, wifi_connect_handler, LV_EVENT_CLICKED, NULL);
+
+    for (int i = 0; i < WIFI_SCAN_MAX; i++) {
+        wifi_scan_btns[i] = lv_btn_create(wifi_scr);
+        lv_obj_set_size(wifi_scan_btns[i], 105, 24);
+        lv_obj_align(wifi_scan_btns[i], LV_ALIGN_TOP_LEFT, 8 + (i % 2) * 115, 118 + (i / 2) * 28);
+        lv_obj_set_style_bg_color(wifi_scan_btns[i], lv_color_hex(0x101810), 0);
+        lv_obj_set_style_border_width(wifi_scan_btns[i], 1, 0);
+        lv_obj_set_style_border_color(wifi_scan_btns[i], lv_color_hex(0x00ff41), 0);
+        wifi_scan_labels[i] = lv_label_create(wifi_scan_btns[i]);
+        lv_label_set_text(wifi_scan_labels[i], "-");
+        lv_obj_set_style_text_font(wifi_scan_labels[i], cjk16_font, 0);
+        lv_obj_set_style_text_color(wifi_scan_labels[i], lv_color_hex(0x00ff41), 0);
+        lv_label_set_long_mode(wifi_scan_labels[i], LV_LABEL_LONG_DOT);
+        lv_obj_set_width(wifi_scan_labels[i], 96);
+        lv_obj_center(wifi_scan_labels[i]);
+        lv_obj_add_event_cb(wifi_scan_btns[i], wifi_ap_select_handler, LV_EVENT_CLICKED, (void *)(uintptr_t)i);
+    }
+
+    wifi_kb = lv_keyboard_create(wifi_scr);
+    lv_obj_set_size(wifi_kb, 240, 82);
+    lv_obj_align(wifi_kb, LV_ALIGN_BOTTOM_MID, 0, 0);
+    lv_obj_add_flag(wifi_kb, LV_OBJ_FLAG_HIDDEN);
 }
 
 /**

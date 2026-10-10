@@ -26,10 +26,14 @@ typedef struct {
     uint8_t is_busy;
 } esp_t;
 
+void ESP_FlushRx(void);
 void ESP_Init(void);
+void ESP_RxCallback(void);
 esp_status_t ESP_SendCmd(const char *cmd, const char *expect, uint32_t timeout);
 esp_status_t ESP_SendData(const char *data, uint16_t len);
 esp_status_t ESP_ConnectAP(const char *ssid, const char *pwd);
+esp_status_t ESP_AutoConnectSavedAP(void);
+int ESP_ScanAP(char ssids[][32], int max_count);
 esp_status_t ESP_HTTPPost(const char *url, const char *json, char *resp, uint16_t resp_size);
 esp_status_t ESP_HTTPPostAuth(const char *url, const char *json, const char *auth_token, char *resp, uint16_t resp_size);
 uint16_t ESP_GetRxLen(void);

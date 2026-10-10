@@ -1,0 +1,17 @@
+; STM32F407VETx SD-card OTA bootloader layout.
+; Bootloader occupies 0x08000000..0x08007FFF.
+
+LR_IROM1 0x08000000 0x00008000  {
+  ER_IROM1 0x08000000 0x00008000  {
+   *.o (RESET, +First)
+   *(InRoot$$Sections)
+   .ANY (+RO)
+   .ANY (+XO)
+  }
+  RW_IRAM1 0x20000000 0x0001C000  {
+   .ANY (+RW +ZI)
+  }
+  RW_IRAM2 0x2001C000 0x00004000  {
+   .ANY (+RW +ZI)
+  }
+}

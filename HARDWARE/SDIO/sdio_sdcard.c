@@ -42,6 +42,40 @@ volatile SD_Error TransferError=SD_OK;					//���ݴ�������־,
 volatile u8 TransferEnd=0;								//���������־,DMA��дʱʹ��
 SD_CardInfo SDCardInfo;									//SD����Ϣ
 
+__weak void boot_log(const char *msg)
+{
+	(void)msg;
+}
+
+__weak void boot_log_hex(const char *prefix, uint32_t value)
+{
+	(void)prefix;
+	(void)value;
+}
+
+#define SD_POWERON_TRIALS 200U
+
+#ifdef BOOTLOADER_SD_SAFE
+#define SD_TRANSFER_CLK_DIV_ACTIVE 0x16U
+#else
+#define SD_TRANSFER_CLK_DIV_ACTIVE SDIO_TRANSFER_CLK_DIV
+#endif
+
+static void SD_SendCommandClean(void)
+{
+	u32 timeout = SDIO_CMD0TIMEOUT;
+
+	while ((SDIO->STA & SDIO_FLAG_CMDACT) && (timeout > 0U)) {
+		timeout--;
+	}
+	if (timeout == 0U) {
+		boot_log("[BOOT] SDIO CMDACT stuck\r\n");
+	}
+
+	__SDIO_CLEAR_FLAG(SDIO, SDIO_STATIC_FLAGS);
+	SDIO_SendCommand(SDIO, &SDIO_CmdInitStructure);
+}
+
 //SD_ReadDisk/SD_WriteDisk����ר��buf,�����������������ݻ�������ַ����4�ֽڶ����ʱ��,
 //��Ҫ�õ�������,ȷ�����ݻ�������ַ��4�ֽڶ����.
 __align(4) u8 SDIO_DATA_BUFFER[512];						  
@@ -66,23 +100,71 @@ SD_Error SD_Init(void)
 {
 	SD_Error errorstatus=SD_OK;	 
 
+	boot_log("[BOOT] SD_Init msp\r\n");
+	hsd.Instance = SDIO;
 	HAL_SD_MspInit(&hsd);
 		
  	//SDIO����Ĵ�������ΪĬ��ֵ 			   
+	boot_log("[BOOT] SD_Init reg deinit\r\n");
 	SDIO_Register_Deinit();
 	
 	
+	boot_log("[BOOT] SD_Init power on\r\n");
    	errorstatus=SD_PowerON();			//SD���ϵ�
+	if(errorstatus!=SD_OK) {
+		boot_log("[BOOT] SD_Init power fail\r\n");
+	}
+	else {
+		boot_log("[BOOT] SD_Init power ok\r\n");
+	}
+	boot_log("[BOOT] SD_Init cards\r\n");
  	if(errorstatus==SD_OK)errorstatus=SD_InitializeCards();			//��ʼ��SD��														  
+	if(errorstatus!=SD_OK) {
+		boot_log("[BOOT] SD_Init cards fail\r\n");
+	}
+	else {
+		boot_log("[BOOT] SD_Init cards ok\r\n");
+	}
+	boot_log("[BOOT] SD_Init info\r\n");
   	if(errorstatus==SD_OK)errorstatus=SD_GetCardInfo(&SDCardInfo);	//��ȡ����Ϣ
+	if(errorstatus!=SD_OK) {
+		boot_log("[BOOT] SD_Init info fail\r\n");
+	}
+	else {
+		boot_log("[BOOT] SD_Init info ok\r\n");
+	}
+	boot_log("[BOOT] SD_Init select\r\n");
  	if(errorstatus==SD_OK)errorstatus=SD_SelectDeselect((u32)(SDCardInfo.RCA<<16));//ѡ��SD��   
+	if(errorstatus!=SD_OK) {
+		boot_log("[BOOT] SD_Init select fail\r\n");
+	}
+	else {
+		boot_log("[BOOT] SD_Init select ok\r\n");
+	}
+	boot_log("[BOOT] SD_Init wide bus\r\n");
+#ifdef BOOTLOADER_SD_SAFE
+	if(errorstatus==SD_OK) {
+		boot_log("[BOOT] SD_Init force 1bit\r\n");
+	}
+#else
    	if(errorstatus==SD_OK)errorstatus=SD_EnableWideBusOperation(SDIO_BUS_WIDE_4B);	//4λ����,�����MMC��,������4λģʽ 
-  	if((errorstatus==SD_OK)||(SDIO_MULTIMEDIA_CARD==CardType))
+#endif
+	if(errorstatus!=SD_OK) {
+		boot_log("[BOOT] SD_Init wide fail\r\n");
+		errorstatus = SD_OK;
+	}
+	else {
+		boot_log("[BOOT] SD_Init wide ok\r\n");
+	}
+	if((errorstatus==SD_OK)||(SDIO_MULTIMEDIA_CARD==CardType))
 	{  		    
-		SDIO_Clock_Set(SDIO_TRANSFER_CLK_DIV);			//����ʱ��Ƶ��,SDIOʱ�Ӽ��㹫ʽ:SDIO_CKʱ��=SDIOCLK/[clkdiv+2];����,SDIOCLK�̶�Ϊ48Mhz 
+		boot_log("[BOOT] SD_Init set clk\r\n");
+		SDIO_Clock_Set(SD_TRANSFER_CLK_DIV_ACTIVE);			//����ʱ��Ƶ��,SDIOʱ�Ӽ��㹫ʽ:SDIO_CKʱ��=SDIOCLK/[clkdiv+2];����,SDIOCLK�̶�Ϊ48Mhz 
 		//errorstatus=SD_SetDeviceMode(SD_DMA_MODE);	//����ΪDMAģʽ
+		boot_log("[BOOT] SD_Init polling mode\r\n");
 		errorstatus=SD_SetDeviceMode(SD_POLLING_MODE);//����Ϊ��ѯģʽ
  	}
+	boot_log("[BOOT] SD_Init return\r\n");
 	return errorstatus;		 
 }
 //SDIOʱ�ӳ�ʼ������
@@ -133,27 +215,35 @@ SDIO->CLKCR = SDIO_INIT_CLK_DIV          // 400KHz
     SDIO_CmdInitStructure.Response = SDIO_RESPONSE_NO;  //����Ӧ
     SDIO_CmdInitStructure.WaitForInterrupt = SDIO_WAIT_NO;
     SDIO_CmdInitStructure.CPSM = SDIO_CPSM_ENABLE;  //��CPSM�ڿ�ʼ��������֮ǰ�ȴ����ݴ�������� 
-    SDIO_SendCommand(SDIO, &SDIO_CmdInitStructure);	  		//д���������Ĵ���
+    SD_SendCommandClean();	  		//д���������Ĵ���
 		
 		errorstatus=CmdError();
 		
 		if(errorstatus==SD_OK)break;
  	}
- 	if(errorstatus)return errorstatus;//���ش���״̬
+ 	if(errorstatus) {
+		boot_log("[BOOT] SD_PowerON CMD0 fail\r\n");
+		return errorstatus;
+	}//���ش���״̬
+	boot_log("[BOOT] SD_PowerON CMD0 ok\r\n");
 	
   SDIO_CmdInitStructure.Argument = SD_CHECK_PATTERN;	//����CMD8,����Ӧ,���SD���ӿ�����
   SDIO_CmdInitStructure.CmdIndex = SDIO_SEND_IF_COND;	//cmd8
   SDIO_CmdInitStructure.Response = SDIO_RESPONSE_SHORT;	 //r7
   SDIO_CmdInitStructure.WaitForInterrupt = SDIO_WAIT_NO;			 //�رյȴ��ж�
   SDIO_CmdInitStructure.CPSM = SDIO_CPSM_ENABLE;
-  SDIO_SendCommand(SDIO, &SDIO_CmdInitStructure);
+  SD_SendCommandClean();
 	
   errorstatus=CmdResp7Error();						//�ȴ�R7��Ӧ
 	
  	if(errorstatus==SD_OK) 								//R7��Ӧ����
 	{
+		boot_log("[BOOT] SD_PowerON CMD8 ok\r\n");
 		CardType=SDIO_STD_CAPACITY_SD_CARD_V2_0;		//SD 2.0��
 		SDType=SD_HIGH_CAPACITY;			   			//��������
+	}
+	else {
+		boot_log("[BOOT] SD_PowerON CMD8 timeout\r\n");
 	}
 	  
 	  SDIO_CmdInitStructure.Argument = 0x00;//����CMD55,����Ӧ	
@@ -161,21 +251,23 @@ SDIO->CLKCR = SDIO_INIT_CLK_DIV          // 400KHz
     SDIO_CmdInitStructure.Response = SDIO_RESPONSE_SHORT;
     SDIO_CmdInitStructure.WaitForInterrupt = SDIO_WAIT_NO;
     SDIO_CmdInitStructure.CPSM = SDIO_CPSM_ENABLE;
-    SDIO_SendCommand(SDIO, &SDIO_CmdInitStructure);		//����CMD55,����Ӧ	 
+    SD_SendCommandClean();		//����CMD55,����Ӧ	 
 	
 	 errorstatus=CmdResp1Error(SD_CMD_APP_CMD); 		 	//�ȴ�R1��Ӧ   
 	
 	if(errorstatus==SD_OK)//SD2.0/SD 1.1,����ΪMMC��
 	{																  
+		boot_log("[BOOT] SD_PowerON CMD55 ok\r\n");
 		//SD��,����ACMD41 SD_APP_OP_COND,����Ϊ:0x80100000 
-		while((!validvoltage)&&(count<SD_MAX_VOLT_TRIAL))
+		boot_log("[BOOT] SD_PowerON ACMD41 loop\r\n");
+		while((!validvoltage)&&(count<SD_POWERON_TRIALS))
 		{	   										   
 		  SDIO_CmdInitStructure.Argument = 0x00;//����CMD55,����Ӧ
       SDIO_CmdInitStructure.CmdIndex = SD_CMD_APP_CMD;	  //CMD55
       SDIO_CmdInitStructure.Response = SDIO_RESPONSE_SHORT;
       SDIO_CmdInitStructure.WaitForInterrupt = SDIO_WAIT_NO;
       SDIO_CmdInitStructure.CPSM = SDIO_CPSM_ENABLE;
-      SDIO_SendCommand(SDIO, &SDIO_CmdInitStructure);			//����CMD55,����Ӧ	 
+      SD_SendCommandClean();			//����CMD55,����Ӧ	 
 			
 			errorstatus=CmdResp1Error(SD_CMD_APP_CMD); 	 	//�ȴ�R1��Ӧ  
 			
@@ -187,7 +279,7 @@ SDIO->CLKCR = SDIO_INIT_CLK_DIV          // 400KHz
       SDIO_CmdInitStructure.Response = SDIO_RESPONSE_SHORT;  //r3
       SDIO_CmdInitStructure.WaitForInterrupt = SDIO_WAIT_NO;
       SDIO_CmdInitStructure.CPSM = SDIO_CPSM_ENABLE;
-      SDIO_SendCommand(SDIO, &SDIO_CmdInitStructure);
+      SD_SendCommandClean();
 			
 			errorstatus=CmdResp3Error(); 					//�ȴ�R3��Ӧ   
 			
@@ -196,26 +288,30 @@ SDIO->CLKCR = SDIO_INIT_CLK_DIV          // 400KHz
 			validvoltage=(((response>>31)==1)?1:0);			//�ж�SD���ϵ��Ƿ����
 			count++;
 		}
-		if(count>=SD_MAX_VOLT_TRIAL)
+		if(count>=SD_POWERON_TRIALS)
 		{
+			boot_log("[BOOT] SD_PowerON ACMD41 fail\r\n");
 			errorstatus=SD_INVALID_VOLTRANGE;
 			return errorstatus;
 		}	 
+		boot_log("[BOOT] SD_PowerON ACMD41 ok\r\n");
 		if(response&=SD_HIGH_CAPACITY)
 		{
 			CardType=SDIO_HIGH_CAPACITY_SD_CARD;
 		}
  	}else//MMC��
 	{
+		boot_log("[BOOT] SD_PowerON CMD55 fail, try MMC\r\n");
 		//MMC��,����CMD1 SDIO_SEND_OP_COND,����Ϊ:0x80FF8000 
-		while((!validvoltage)&&(count<SD_MAX_VOLT_TRIAL))
+		boot_log("[BOOT] SD_PowerON CMD1 loop\r\n");
+		while((!validvoltage)&&(count<SD_POWERON_TRIALS))
 		{	   										   				   
 			SDIO_CmdInitStructure.Argument = SD_VOLTAGE_WINDOW_MMC;//����CMD1,����Ӧ	   
       SDIO_CmdInitStructure.CmdIndex = SD_CMD_SEND_OP_COND;
       SDIO_CmdInitStructure.Response = SDIO_RESPONSE_SHORT;  //r3
       SDIO_CmdInitStructure.WaitForInterrupt = SDIO_WAIT_NO;
       SDIO_CmdInitStructure.CPSM = SDIO_CPSM_ENABLE;
-      SDIO_SendCommand(SDIO, &SDIO_CmdInitStructure);
+      SD_SendCommandClean();
 			
 			errorstatus=CmdResp3Error(); 					//�ȴ�R3��Ӧ   
 			
@@ -224,8 +320,9 @@ SDIO->CLKCR = SDIO_INIT_CLK_DIV          // 400KHz
 			validvoltage=(((response>>31)==1)?1:0);
 			count++;
 		}
-		if(count>=SD_MAX_VOLT_TRIAL)
+		if(count>=SD_POWERON_TRIALS)
 		{
+			boot_log("[BOOT] SD_PowerON CMD1 fail\r\n");
 			errorstatus=SD_INVALID_VOLTRANGE;
 			return errorstatus;
 		}	 			    
@@ -262,7 +359,7 @@ SD_Error SD_InitializeCards(void)
     SDIO_CmdInitStructure.Response = SDIO_RESPONSE_LONG;
     SDIO_CmdInitStructure.WaitForInterrupt = SDIO_WAIT_NO;
     SDIO_CmdInitStructure.CPSM = SDIO_CPSM_ENABLE;
-    SDIO_SendCommand(SDIO, &SDIO_CmdInitStructure);//����CMD2,ȡ��CID,����Ӧ	
+    SD_SendCommandClean();//����CMD2,ȡ��CID,����Ӧ	
 		
 		errorstatus=CmdResp2Error(); 					//�ȴ�R2��Ӧ 
 		
@@ -280,7 +377,7 @@ SD_Error SD_InitializeCards(void)
     SDIO_CmdInitStructure.Response = SDIO_RESPONSE_SHORT; //r6
     SDIO_CmdInitStructure.WaitForInterrupt = SDIO_WAIT_NO;
     SDIO_CmdInitStructure.CPSM = SDIO_CPSM_ENABLE;
-    SDIO_SendCommand(SDIO, &SDIO_CmdInitStructure);	//����CMD3,����Ӧ 
+    SD_SendCommandClean();	//����CMD3,����Ӧ 
 		
 		errorstatus=CmdResp6Error(SD_CMD_SET_REL_ADDR,&rca);//�ȴ�R6��Ӧ 
 		
@@ -294,7 +391,7 @@ SD_Error SD_InitializeCards(void)
       SDIO_CmdInitStructure.Response = SDIO_RESPONSE_SHORT; //r6
       SDIO_CmdInitStructure.WaitForInterrupt = SDIO_WAIT_NO;
       SDIO_CmdInitStructure.CPSM = SDIO_CPSM_ENABLE;
-      SDIO_SendCommand(SDIO, &SDIO_CmdInitStructure);	//����CMD3,����Ӧ 	
+      SD_SendCommandClean();	//����CMD3,����Ӧ 	
 			
       errorstatus=CmdResp2Error(); 					//�ȴ�R2��Ӧ   
 			
@@ -309,7 +406,7 @@ SD_Error SD_InitializeCards(void)
     SDIO_CmdInitStructure.Response = SDIO_RESPONSE_LONG;
     SDIO_CmdInitStructure.WaitForInterrupt = SDIO_WAIT_NO;
     SDIO_CmdInitStructure.CPSM = SDIO_CPSM_ENABLE;
-    SDIO_SendCommand(SDIO, &SDIO_CmdInitStructure);
+    SD_SendCommandClean();
 		
 		errorstatus=CmdResp2Error(); 					//�ȴ�R2��Ӧ   
 		if(errorstatus!=SD_OK)return errorstatus;   	//��Ӧ����		    
@@ -504,7 +601,7 @@ SD_Error SD_SelectDeselect(u32 addr)
   SDIO_CmdInitStructure.Response = SDIO_RESPONSE_SHORT;
   SDIO_CmdInitStructure.WaitForInterrupt = SDIO_WAIT_NO;
   SDIO_CmdInitStructure.CPSM = SDIO_CPSM_ENABLE;
-  SDIO_SendCommand(SDIO, &SDIO_CmdInitStructure);//����CMD7,ѡ��,����Ӧ
+  SD_SendCommandClean();//����CMD7,ѡ��,����Ӧ
 	
  	return CmdResp1Error(SD_CMD_SEL_DESEL_CARD);	  
 }
@@ -515,7 +612,8 @@ SD_Error SD_SelectDeselect(u32 addr)
 SD_Error SD_ReadBlock(u8 *buf,long long addr,u16 blksize)
 {	  
 	SD_Error errorstatus=SD_OK;
-	u8 power;
+	u8 power = 9;
+	u8 skip_cmd16 = 0;
   u32 count=0,*tempbuff=(u32*)buf;//ת��Ϊu32ָ�� 
 	u32 timeout=SD_DATATIMEOUT;   
   if(NULL==buf)
@@ -526,6 +624,7 @@ SD_Error SD_ReadBlock(u8 *buf,long long addr,u16 blksize)
 	{
 		blksize=512;
 		addr>>=9;
+		skip_cmd16 = 1;
 	}   
   	SDIO_DataInitStructure.DataBlockSize= SDIO_DATABLOCK_SIZE_1B ;//���DPSM״̬������
 	  SDIO_DataInitStructure.DataLength= 0 ;
@@ -545,19 +644,20 @@ SDIO->DCTRL  = SDIO_DataInitStructure.DataBlockSize
 	if((blksize>0)&&(blksize<=2048)&&((blksize&(blksize-1))==0))
 	{
 		power=convert_from_bytes_to_power_of_two(blksize);	
-		
-   
-		SDIO_CmdInitStructure.Argument =  blksize;
-    SDIO_CmdInitStructure.CmdIndex = SD_CMD_SET_BLOCKLEN;
-    SDIO_CmdInitStructure.Response = SDIO_RESPONSE_SHORT;
-    SDIO_CmdInitStructure.WaitForInterrupt = SDIO_WAIT_NO;
-    SDIO_CmdInitStructure.CPSM = SDIO_CPSM_ENABLE;
-    SDIO_SendCommand(SDIO, &SDIO_CmdInitStructure);//����CMD16+�������ݳ���Ϊblksize,����Ӧ
-		
-		
-		errorstatus=CmdResp1Error(SD_CMD_SET_BLOCKLEN);	//�ȴ�R1��Ӧ 
-		
-		if(errorstatus!=SD_OK)return errorstatus;   	//��Ӧ����	
+
+		if(!skip_cmd16)
+		{
+			SDIO_CmdInitStructure.Argument =  blksize;
+			SDIO_CmdInitStructure.CmdIndex = SD_CMD_SET_BLOCKLEN;
+			SDIO_CmdInitStructure.Response = SDIO_RESPONSE_SHORT;
+			SDIO_CmdInitStructure.WaitForInterrupt = SDIO_WAIT_NO;
+			SDIO_CmdInitStructure.CPSM = SDIO_CPSM_ENABLE;
+			SD_SendCommandClean();//����CMD16+�������ݳ���Ϊblksize,����Ӧ
+			
+			errorstatus=CmdResp1Error(SD_CMD_SET_BLOCKLEN);	//�ȴ�R1��Ӧ 
+			
+			if(errorstatus!=SD_OK)return errorstatus;   	//��Ӧ����	
+		}
 		
 	}else return SD_INVALID_PARAMETER;	  	 
 	
@@ -579,7 +679,7 @@ SDIO->DCTRL  = SDIO_DataInitStructure.DataBlockSize
     SDIO_CmdInitStructure.Response = SDIO_RESPONSE_SHORT;
     SDIO_CmdInitStructure.WaitForInterrupt = SDIO_WAIT_NO;
     SDIO_CmdInitStructure.CPSM = SDIO_CPSM_ENABLE;
-    SDIO_SendCommand(SDIO, &SDIO_CmdInitStructure);//����CMD17+��addr��ַ����ȡ����,����Ӧ 
+    SD_SendCommandClean();//����CMD17+��addr��ַ����ȡ����,����Ӧ 
 	
 	errorstatus=CmdResp1Error(SD_CMD_READ_SINGLE_BLOCK);//�ȴ�R1��Ӧ   
 	if(errorstatus!=SD_OK)return errorstatus;   		//��Ӧ����	 
@@ -686,7 +786,7 @@ SDIO->DCTRL  = SDIO_DataInitStructure.DataBlockSize
 		SDIO_CmdInitStructure.Response = SDIO_RESPONSE_SHORT;
 		SDIO_CmdInitStructure.WaitForInterrupt = SDIO_WAIT_NO;
 		SDIO_CmdInitStructure.CPSM = SDIO_CPSM_ENABLE;
-		SDIO_SendCommand(SDIO, &SDIO_CmdInitStructure);
+		SD_SendCommandClean();
 		
 		errorstatus=CmdResp1Error(SD_CMD_SET_BLOCKLEN);	//�ȴ�R1��Ӧ  
 		
@@ -716,7 +816,7 @@ SDIO->DCTRL  = SDIO_DataInitStructure.DataBlockSize
 		   SDIO_CmdInitStructure.Response = SDIO_RESPONSE_SHORT;
 		   SDIO_CmdInitStructure.WaitForInterrupt = SDIO_WAIT_NO;
 		   SDIO_CmdInitStructure.CPSM = SDIO_CPSM_ENABLE;
-		   SDIO_SendCommand(SDIO, &SDIO_CmdInitStructure);	
+		   SD_SendCommandClean();	
 		
 		errorstatus=CmdResp1Error(SD_CMD_READ_MULT_BLOCK);//�ȴ�R1��Ӧ 
 		
@@ -773,7 +873,7 @@ SDIO->DCTRL  = SDIO_DataInitStructure.DataBlockSize
 					SDIO_CmdInitStructure.Response = SDIO_RESPONSE_SHORT;
 					SDIO_CmdInitStructure.WaitForInterrupt = SDIO_WAIT_NO;
 					SDIO_CmdInitStructure.CPSM = SDIO_CPSM_ENABLE;
-					SDIO_SendCommand(SDIO, &SDIO_CmdInitStructure);	
+					SD_SendCommandClean();	
 					
 					errorstatus=CmdResp1Error(SD_CMD_STOP_TRANSMISSION);//�ȴ�R1��Ӧ   
 					
@@ -850,7 +950,7 @@ SDIO->DCTRL  = SDIO_DataInitStructure.DataBlockSize
 		SDIO_CmdInitStructure.Response = SDIO_RESPONSE_SHORT;
 		SDIO_CmdInitStructure.WaitForInterrupt = SDIO_WAIT_NO;
 		SDIO_CmdInitStructure.CPSM = SDIO_CPSM_ENABLE;
-		SDIO_SendCommand(SDIO, &SDIO_CmdInitStructure);	
+		SD_SendCommandClean();	
 		
 		errorstatus=CmdResp1Error(SD_CMD_SET_BLOCKLEN);	//�ȴ�R1��Ӧ  
 		
@@ -863,7 +963,7 @@ SDIO->DCTRL  = SDIO_DataInitStructure.DataBlockSize
 			SDIO_CmdInitStructure.Response = SDIO_RESPONSE_SHORT;
 			SDIO_CmdInitStructure.WaitForInterrupt = SDIO_WAIT_NO;
 			SDIO_CmdInitStructure.CPSM = SDIO_CPSM_ENABLE;
-			SDIO_SendCommand(SDIO, &SDIO_CmdInitStructure);	
+			SD_SendCommandClean();	
 
 	  errorstatus=CmdResp1Error(SD_CMD_SEND_STATUS);		//�ȴ�R1��Ӧ  
 	
@@ -879,7 +979,7 @@ SDIO->DCTRL  = SDIO_DataInitStructure.DataBlockSize
 		SDIO_CmdInitStructure.Response = SDIO_RESPONSE_SHORT;
 		SDIO_CmdInitStructure.WaitForInterrupt = SDIO_WAIT_NO;
 		SDIO_CmdInitStructure.CPSM = SDIO_CPSM_ENABLE;
-		SDIO_SendCommand(SDIO, &SDIO_CmdInitStructure);	
+		SD_SendCommandClean();	
 		
 		errorstatus=CmdResp1Error(SD_CMD_SEND_STATUS);	//�ȴ�R1��Ӧ   
 		
@@ -894,7 +994,7 @@ SDIO->DCTRL  = SDIO_DataInitStructure.DataBlockSize
 			SDIO_CmdInitStructure.Response = SDIO_RESPONSE_SHORT;
 			SDIO_CmdInitStructure.WaitForInterrupt = SDIO_WAIT_NO;
 			SDIO_CmdInitStructure.CPSM = SDIO_CPSM_ENABLE;
-			SDIO_SendCommand(SDIO, &SDIO_CmdInitStructure);	
+			SD_SendCommandClean();	
 	
 	errorstatus=CmdResp1Error(SD_CMD_WRITE_SINGLE_BLOCK);//�ȴ�R1��Ӧ  
 	
@@ -1041,7 +1141,7 @@ SDIO->DCTRL  = SDIO_DataInitStructure.DataBlockSize
 		SDIO_CmdInitStructure.Response = SDIO_RESPONSE_SHORT;
 		SDIO_CmdInitStructure.WaitForInterrupt = SDIO_WAIT_NO;
 		SDIO_CmdInitStructure.CPSM = SDIO_CPSM_ENABLE;
-		SDIO_SendCommand(SDIO, &SDIO_CmdInitStructure);	
+		SD_SendCommandClean();	
 		
 		errorstatus=CmdResp1Error(SD_CMD_SET_BLOCKLEN);	//�ȴ�R1��Ӧ  
 		
@@ -1059,7 +1159,7 @@ SDIO->DCTRL  = SDIO_DataInitStructure.DataBlockSize
 				SDIO_CmdInitStructure.Response = SDIO_RESPONSE_SHORT;
 				SDIO_CmdInitStructure.WaitForInterrupt = SDIO_WAIT_NO;
 				SDIO_CmdInitStructure.CPSM = SDIO_CPSM_ENABLE;
-				SDIO_SendCommand(SDIO, &SDIO_CmdInitStructure);	
+				SD_SendCommandClean();	
 				
 			errorstatus=CmdResp1Error(SD_CMD_APP_CMD);		//�ȴ�R1��Ӧ 
 				
@@ -1070,7 +1170,7 @@ SDIO->DCTRL  = SDIO_DataInitStructure.DataBlockSize
 				SDIO_CmdInitStructure.Response = SDIO_RESPONSE_SHORT;
 				SDIO_CmdInitStructure.WaitForInterrupt = SDIO_WAIT_NO;
 				SDIO_CmdInitStructure.CPSM = SDIO_CPSM_ENABLE;
-				SDIO_SendCommand(SDIO, &SDIO_CmdInitStructure);
+				SD_SendCommandClean();
 			  
 				errorstatus=CmdResp1Error(SD_CMD_SET_BLOCK_COUNT);//�ȴ�R1��Ӧ 
 				
@@ -1083,7 +1183,7 @@ SDIO->DCTRL  = SDIO_DataInitStructure.DataBlockSize
 				SDIO_CmdInitStructure.Response = SDIO_RESPONSE_SHORT;
 				SDIO_CmdInitStructure.WaitForInterrupt = SDIO_WAIT_NO;
 				SDIO_CmdInitStructure.CPSM = SDIO_CPSM_ENABLE;
-				SDIO_SendCommand(SDIO, &SDIO_CmdInitStructure);	
+				SD_SendCommandClean();	
 
  		errorstatus=CmdResp1Error(SD_CMD_WRITE_MULT_BLOCK);	//�ȴ�R1��Ӧ   		   
 	
@@ -1160,7 +1260,7 @@ SDIO->DCTRL  = SDIO_DataInitStructure.DataBlockSize
 					SDIO_CmdInitStructure.Response = SDIO_RESPONSE_SHORT;
 					SDIO_CmdInitStructure.WaitForInterrupt = SDIO_WAIT_NO;
 					SDIO_CmdInitStructure.CPSM = SDIO_CPSM_ENABLE;
-					SDIO_SendCommand(SDIO, &SDIO_CmdInitStructure);	
+					SD_SendCommandClean();	
 					
 					errorstatus=CmdResp1Error(SD_CMD_STOP_TRANSMISSION);//�ȴ�R1��Ӧ   
 					if(errorstatus!=SD_OK)return errorstatus;	 
@@ -1220,7 +1320,7 @@ SD_Error SD_ProcessIRQSrc(void)
 				SDIO_CmdInitStructure.Response = SDIO_RESPONSE_SHORT;
 				SDIO_CmdInitStructure.WaitForInterrupt = SDIO_WAIT_NO;
 				SDIO_CmdInitStructure.CPSM = SDIO_CPSM_ENABLE;
-				SDIO_SendCommand(SDIO, &SDIO_CmdInitStructure);	
+				SD_SendCommandClean();	
 					
 			TransferError=CmdResp1Error(SD_CMD_STOP_TRANSMISSION);
 		}else TransferError = SD_OK;	
@@ -1273,11 +1373,19 @@ SD_Error CmdError(void)
 {
 	SD_Error errorstatus = SD_OK;
 	u32 timeout=SDIO_CMD0TIMEOUT;	   
-	while(timeout--)
+	while(timeout>0U)
 	{
 		if(__SDIO_GET_FLAG(SDIO,SDIO_FLAG_CMDSENT) != RESET)break;	//�����ѷ���(������Ӧ)	 
+		timeout--;
 	}	    
-	if(timeout==0)return SD_CMD_RSP_TIMEOUT;  
+	if(timeout==0) {
+		boot_log("[BOOT] CMD0 timeout\r\n");
+		boot_log_hex("[BOOT] CMD0 STA=", SDIO->STA);
+		boot_log_hex("[BOOT] CMD0 CMD=", SDIO->CMD);
+		boot_log_hex("[BOOT] CMD0 CLKCR=", SDIO->CLKCR);
+		boot_log_hex("[BOOT] CMD0 POWER=", SDIO->POWER);
+		return SD_CMD_RSP_TIMEOUT;
+	}
 	__SDIO_CLEAR_FLAG(SDIO,SDIO_STATIC_FLAGS);//������б��
 	return errorstatus;
 }	 
@@ -1288,10 +1396,11 @@ SD_Error CmdResp7Error(void)
 	SD_Error errorstatus=SD_OK;
 	u32 status;
 	u32 timeout=SDIO_CMD0TIMEOUT;
- 	while(timeout--)
+ 	while(timeout>0U)
 	{
 		status=SDIO->STA;
 		if(status&((1<<0)|(1<<2)|(1<<6)))break;//CRC����/������Ӧ��ʱ/�Ѿ��յ���Ӧ(CRCУ��ɹ�)	
+		timeout--;
 	}
  	if((timeout==0)||(status&(1<<2)))	//��Ӧ��ʱ
 	{																				    
@@ -1302,7 +1411,7 @@ SD_Error CmdResp7Error(void)
 	if(status&1<<6)						//�ɹ����յ���Ӧ
 	{								   
 		errorstatus=SD_OK;
-		__SDIO_CLEAR_FLAG(SDIO,SDIO_FLAG_CMDREND); 				//�����Ӧ��־
+		__SDIO_CLEAR_FLAG(SDIO,SDIO_STATIC_FLAGS); 				//�����Ӧ��־
  	}
 	return errorstatus;
 }	   
@@ -1311,37 +1420,60 @@ SD_Error CmdResp7Error(void)
 //����ֵ:sd��������
 SD_Error CmdResp1Error(u8 cmd)
 {	  
-   	u32 status; 
-	while(1)
+   	u32 status = 0;
+	u32 timeout = SDIO_CMD0TIMEOUT;
+	while(timeout>0U)
 	{
 		status=SDIO->STA;
 		if(status&((1<<0)|(1<<2)|(1<<6)))break;//CRC����/������Ӧ��ʱ/�Ѿ��յ���Ӧ(CRCУ��ɹ�)
+		timeout--;
 	} 
-	if(__SDIO_GET_FLAG(SDIO,SDIO_FLAG_CTIMEOUT) != RESET)					//��Ӧ��ʱ
+	if((timeout==0)||(__SDIO_GET_FLAG(SDIO,SDIO_FLAG_CTIMEOUT) != RESET))					//��Ӧ��ʱ
 	{																				    
+		boot_log("[BOOT] R1 timeout\r\n");
+		boot_log_hex("[BOOT] R1 expected=", cmd);
+		boot_log_hex("[BOOT] R1 STA=", status);
  		__SDIO_CLEAR_FLAG(SDIO,SDIO_FLAG_CTIMEOUT); 				//���������Ӧ��ʱ��־
 		return SD_CMD_RSP_TIMEOUT;
 	}	
  	if(__SDIO_GET_FLAG(SDIO,SDIO_FLAG_CCRCFAIL) != RESET)					//CRC����
 	{																				    
+		boot_log("[BOOT] R1 crc fail\r\n");
+		boot_log_hex("[BOOT] R1 STA=", status);
  		__SDIO_CLEAR_FLAG(SDIO,SDIO_FLAG_CCRCFAIL); 				//�����־
 		return SD_CMD_CRC_FAIL;
 	}		
-	if(SDIO->RESPCMD!=cmd)return SD_ILLEGAL_CMD;//���ƥ�� 
+	if(SDIO->RESPCMD!=cmd) {
+		boot_log("[BOOT] R1 respcmd mismatch\r\n");
+		boot_log_hex("[BOOT] R1 RESPCMD=", SDIO->RESPCMD);
+		boot_log_hex("[BOOT] R1 expected=", cmd);
+		boot_log_hex("[BOOT] R1 STA=", status);
+		boot_log_hex("[BOOT] R1 RESP1=", SDIO->RESP1);
+		__SDIO_CLEAR_FLAG(SDIO,SDIO_STATIC_FLAGS);
+		return SD_ILLEGAL_CMD;
+	}//���ƥ�� 
   __SDIO_CLEAR_FLAG(SDIO,SDIO_STATIC_FLAGS);//������б��
-	return (SD_Error)(SDIO->RESP1&SD_OCR_ERRORBITS);//���ؿ���Ӧ
+	status = SDIO->RESP1&SD_OCR_ERRORBITS;
+	if (status != 0U) {
+		boot_log("[BOOT] R1 error bits\r\n");
+		boot_log_hex("[BOOT] R1 RESP1=", SDIO->RESP1);
+		boot_log_hex("[BOOT] R1 ERR=", status);
+	}
+	return (SD_Error)status;//���ؿ���Ӧ
 }
 //���R3��Ӧ�Ĵ���״̬
 //����ֵ:����״̬
 SD_Error CmdResp3Error(void)
 {
-	u32 status;						 
- 	while(1)
+	u32 status = 0;
+	u32 timeout = SDIO_CMD0TIMEOUT;
+ 	while(timeout>0U)
 	{
 		status=SDIO->STA;
 		if(status&((1<<0)|(1<<2)|(1<<6)))break;//CRC����/������Ӧ��ʱ/�Ѿ��յ���Ӧ(CRCУ��ɹ�)	
+		timeout--;
 	}
- 	if(__SDIO_GET_FLAG(SDIO,SDIO_FLAG_CTIMEOUT) != RESET)					//��Ӧ��ʱ
+ 	if((timeout==0)||(__SDIO_GET_FLAG(SDIO,SDIO_FLAG_CTIMEOUT) != RESET))					//��Ӧ��ʱ
 	{											 
 		__SDIO_CLEAR_FLAG(SDIO,SDIO_FLAG_CTIMEOUT);			//���������Ӧ��ʱ��־
 		return SD_CMD_RSP_TIMEOUT;
@@ -1356,10 +1488,11 @@ SD_Error CmdResp2Error(void)
 	SD_Error errorstatus=SD_OK;
 	u32 status;
 	u32 timeout=SDIO_CMD0TIMEOUT;
- 	while(timeout--)
+ 	while(timeout>0U)
 	{
 		status=SDIO->STA;
 		if(status&((1<<0)|(1<<2)|(1<<6)))break;//CRC����/������Ӧ��ʱ/�Ѿ��յ���Ӧ(CRCУ��ɹ�)	
+		timeout--;
 	}
   	if((timeout==0)||(status&(1<<2)))	//��Ӧ��ʱ
 	{																				    
@@ -1382,14 +1515,16 @@ SD_Error CmdResp2Error(void)
 SD_Error CmdResp6Error(u8 cmd,u16*prca)
 {
 	SD_Error errorstatus=SD_OK;
-	u32 status;					    
+	u32 status = 0;
+	u32 timeout = SDIO_CMD0TIMEOUT;
 	u32 rspr1;
- 	while(1)
+ 	while(timeout>0U)
 	{
 		status=SDIO->STA;
 		if(status&((1<<0)|(1<<2)|(1<<6)))break;//CRC����/������Ӧ��ʱ/�Ѿ��յ���Ӧ(CRCУ��ɹ�)	
+		timeout--;
 	}
-	if(__SDIO_GET_FLAG(SDIO,SDIO_FLAG_CTIMEOUT) != RESET)					//��Ӧ��ʱ
+	if((timeout==0)||(__SDIO_GET_FLAG(SDIO,SDIO_FLAG_CTIMEOUT) != RESET))					//��Ӧ��ʱ
 	{																				    
  		__SDIO_CLEAR_FLAG(SDIO,SDIO_FLAG_CTIMEOUT);			//���������Ӧ��ʱ��־
 		return SD_CMD_RSP_TIMEOUT;
@@ -1436,7 +1571,7 @@ SD_Error SDEnWideBus(u8 enx)
       SDIO_CmdInitStructure.Response = SDIO_RESPONSE_SHORT;
       SDIO_CmdInitStructure.WaitForInterrupt = SDIO_WAIT_NO;
       SDIO_CmdInitStructure.CPSM = SDIO_CPSM_ENABLE;
-      SDIO_SendCommand(SDIO, &SDIO_CmdInitStructure);
+      SD_SendCommandClean();
 		
 	 	errorstatus=CmdResp1Error(SD_CMD_APP_CMD);
 		
@@ -1447,7 +1582,7 @@ SD_Error SDEnWideBus(u8 enx)
       SDIO_CmdInitStructure.Response = SDIO_RESPONSE_SHORT;
       SDIO_CmdInitStructure.WaitForInterrupt = SDIO_WAIT_NO;
       SDIO_CmdInitStructure.CPSM = SDIO_CPSM_ENABLE;
-      SDIO_SendCommand(SDIO, &SDIO_CmdInitStructure);
+      SD_SendCommandClean();
 			
      errorstatus=CmdResp1Error(SD_CMD_APP_SD_SET_BUSWIDTH);
 		
@@ -1466,7 +1601,7 @@ SD_Error IsCardProgramming(u8 *pstatus)
   SDIO_CmdInitStructure.Response = SDIO_RESPONSE_SHORT;
   SDIO_CmdInitStructure.WaitForInterrupt = SDIO_WAIT_NO;
   SDIO_CmdInitStructure.CPSM = SDIO_CPSM_ENABLE;
-  SDIO_SendCommand(SDIO, &SDIO_CmdInitStructure);	
+  SD_SendCommandClean();	
  	
 	status=SDIO->STA;
 	
@@ -1504,7 +1639,7 @@ SD_Error SD_SendStatus(uint32_t *pcardstatus)
   SDIO_CmdInitStructure.Response = SDIO_RESPONSE_SHORT;
   SDIO_CmdInitStructure.WaitForInterrupt = SDIO_WAIT_NO;
   SDIO_CmdInitStructure.CPSM = SDIO_CPSM_ENABLE;
-  SDIO_SendCommand(SDIO, &SDIO_CmdInitStructure);	
+  SD_SendCommandClean();	
 	
 	errorstatus=CmdResp1Error(SD_CMD_SEND_STATUS);	//��ѯ��Ӧ״̬ 
 	if(errorstatus!=SD_OK)return errorstatus;
@@ -1534,7 +1669,7 @@ SD_Error FindSCR(u16 rca,u32 *pscr)
   SDIO_CmdInitStructure.Response = SDIO_RESPONSE_SHORT;  //r1
   SDIO_CmdInitStructure.WaitForInterrupt = SDIO_WAIT_NO;
   SDIO_CmdInitStructure.CPSM = SDIO_CPSM_ENABLE;
-  SDIO_SendCommand(SDIO, &SDIO_CmdInitStructure);
+  SD_SendCommandClean();
 	
  	errorstatus=CmdResp1Error(SD_CMD_SET_BLOCKLEN);
 	
@@ -1545,7 +1680,7 @@ SD_Error FindSCR(u16 rca,u32 *pscr)
   SDIO_CmdInitStructure.Response = SDIO_RESPONSE_SHORT;
   SDIO_CmdInitStructure.WaitForInterrupt = SDIO_WAIT_NO;
   SDIO_CmdInitStructure.CPSM = SDIO_CPSM_ENABLE;
-  SDIO_SendCommand(SDIO, &SDIO_CmdInitStructure);
+  SD_SendCommandClean();
 	
  	errorstatus=CmdResp1Error(SD_CMD_APP_CMD);
  	if(errorstatus!=SD_OK)return errorstatus;
@@ -1568,7 +1703,7 @@ SDIO->DCTRL  = SDIO_DataInitStructure.DataBlockSize
   SDIO_CmdInitStructure.Response = SDIO_RESPONSE_SHORT;  //r1
   SDIO_CmdInitStructure.WaitForInterrupt = SDIO_WAIT_NO;
   SDIO_CmdInitStructure.CPSM = SDIO_CPSM_ENABLE;
-  SDIO_SendCommand(SDIO, &SDIO_CmdInitStructure);
+  SD_SendCommandClean();
 	
  	errorstatus=CmdResp1Error(SD_CMD_SD_APP_SEND_SCR);
  	if(errorstatus!=SD_OK)return errorstatus;							   

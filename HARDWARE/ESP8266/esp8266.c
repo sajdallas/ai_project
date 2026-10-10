@@ -15,7 +15,7 @@ static int esp_raw_len = 0;
 /* Flush the receive buffer and re-arm the 1-byte interrupt from rx_buf[0].
  * This fixes the stale-data bug where rx_len was cleared but the UART
  * receive pointer was left at the old position. */
-static void ESP_FlushRx(void)
+void ESP_FlushRx(void)
 {
     __HAL_UART_DISABLE_IT(&huart3, UART_IT_RXNE);
     __HAL_UART_CLEAR_OREFLAG(&huart3);
@@ -90,6 +90,11 @@ esp_status_t ESP_ConnectAP(const char *ssid, const char *pwd)
         if (status != ESP_OK) continue;
 
         status = ESP_SendCmd("ATE0\r\n", "OK", 1000);
+        ESP_SendCmd("AT+CIPSERVER=0\r\n", "OK", 1000);
+        ESP_SendCmd("AT+CIPMUX=0\r\n", "OK", 1000);
+        status = ESP_SendCmd("AT+CWMODE=1\r\n", "OK", 2000);
+        if (status != ESP_OK) continue;
+        ESP_SendCmd("AT+CWAUTOCONN=1\r\n", "OK", 1000);
 
         sprintf(cmd, "AT+CWQAP\r\n");
         ESP_SendCmd(cmd, NULL, 1000);
@@ -110,6 +115,82 @@ esp_status_t ESP_ConnectAP(const char *ssid, const char *pwd)
     }
 
     return status;
+}
+
+esp_status_t ESP_AutoConnectSavedAP(void)
+{
+    esp_status_t status;
+
+    for (int i = 0; i < ESP_MAX_RETRY; i++) {
+        status = ESP_SendCmd("AT\r\n", "OK", 2000);
+        if (status != ESP_OK) continue;
+
+        (void)ESP_SendCmd("ATE0\r\n", "OK", 1000);
+        (void)ESP_SendCmd("AT+CIPSERVER=0\r\n", "OK", 1000);
+        (void)ESP_SendCmd("AT+CIPMUX=0\r\n", "OK", 1000);
+        status = ESP_SendCmd("AT+CWMODE=1\r\n", "OK", 2000);
+        if (status != ESP_OK) continue;
+
+        (void)ESP_SendCmd("AT+CWAUTOCONN=1\r\n", "OK", 1000);
+        osDelay(3000);
+
+        status = ESP_SendCmd("AT+CWJAP?\r\n", "OK", 5000);
+        if (status == ESP_OK) {
+            (void)ESP_SendCmd("AT+CIPSSLSIZE=4096\r\n", "OK", 2000);
+            return ESP_OK;
+        }
+
+        osDelay(1000);
+    }
+
+    return ESP_ERR_WIFI;
+}
+
+int ESP_ScanAP(char ssids[][32], int max_count)
+{
+    int count = 0;
+    char *p;
+
+    if (max_count <= 0) return 0;
+
+    if (ESP_SendCmd("AT\r\n", "OK", 2000) != ESP_OK) return -1;
+    (void)ESP_SendCmd("ATE0\r\n", "OK", 1000);
+    (void)ESP_SendCmd("AT+CIPSERVER=0\r\n", "OK", 1000);
+    (void)ESP_SendCmd("AT+CIPMUX=0\r\n", "OK", 1000);
+    if (ESP_SendCmd("AT+CWMODE=1\r\n", "OK", 2000) != ESP_OK) return -1;
+    if (ESP_SendCmd("AT+CWLAP\r\n", "OK", 10000) != ESP_OK) return -1;
+
+    p = (char *)esp.rx_buf;
+    while (count < max_count && (p = strstr(p, "+CWLAP:(")) != NULL) {
+        char *q1 = strchr(p, '"');
+        char *q2;
+        int len;
+
+        if (!q1) break;
+        q2 = strchr(q1 + 1, '"');
+        if (!q2) break;
+
+        len = (int)(q2 - q1 - 1);
+        if (len > 0) {
+            int dup = 0;
+            if (len > 31) len = 31;
+            for (int i = 0; i < count; i++) {
+                if ((int)strlen(ssids[i]) == len && strncmp(ssids[i], q1 + 1, len) == 0) {
+                    dup = 1;
+                    break;
+                }
+            }
+            if (!dup) {
+                memcpy(ssids[count], q1 + 1, len);
+                ssids[count][len] = '\0';
+                count++;
+            }
+        }
+
+        p = q2 + 1;
+    }
+
+    return count;
 }
 
 /* Snapshot the raw RX bytes for diagnostics (survives the later CIPCLOSE flush). */
@@ -192,6 +273,7 @@ int ESP_RecvResponse(char *resp, int cap, uint32_t timeout_ms)
 
 esp_status_t ESP_HTTPPost(const char *url, const char *json, char *resp, uint16_t resp_size)
 {
+    ESP_SendCmd("AT+CIPMUX=0\r\n", "OK", 1000);
     return ESP_HTTPPostAuth(url, json, NULL, resp, resp_size);
 }
 
@@ -206,6 +288,9 @@ esp_status_t ESP_HTTPPostAuth(const char *url, const char *json, const char *aut
     char path[128];
     int port = 80;
     int is_ssl = 0;
+
+    ESP_SendCmd("AT+CIPMUX=0\r\n", "OK", 1000);
+
     char *colon;
     int json_len, header_len, total_len;
     int n;

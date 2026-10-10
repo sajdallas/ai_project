@@ -31,6 +31,7 @@
 #include "lcd.h"
 #include "touch.h"
 #include <stdio.h>
+#include <string.h>
 #include "delay.h"
 #include "malloc.h"
 #include "fontupd.h"
@@ -70,6 +71,13 @@ static void MX_RTC_Init(void);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+static void app_log(const char *msg)
+{
+  if (huart1.Instance == USART1)
+  {
+    HAL_UART_Transmit(&huart1, (uint8_t *)msg, strlen(msg), 100);
+  }
+}
 
 /* USER CODE END 0 */
 
@@ -104,27 +112,45 @@ int main(void)
   MX_GPIO_Init();
   MX_DMA_Init();
   MX_USART1_UART_Init();
+  app_log("\r\n[APP] uart ok\r\n");
   MX_SPI1_Init();
+  app_log("[APP] spi ok\r\n");
   MX_FSMC_Init();
+  app_log("[APP] fsmc ok\r\n");
   MX_USART3_UART_Init();
+  app_log("[APP] usart3 ok\r\n");
   MX_RTC_Init();
+  app_log("[APP] rtc ok\r\n");
   //
   /* USER CODE BEGIN 2 */
+  app_log("[APP] delay init\r\n");
 	delay_init();
+  app_log("[APP] iic init\r\n");
   IIC_Init();
+  app_log("[APP] lcd init\r\n");
   LCD_Init();                    // 初始化LCD（会自动识别LCD ID并配置）
+  app_log("[APP] lcd ok\r\n");
 
   // ====== 初始化触摸屏 ======
+    app_log("[APP] touch init\r\n");
     tp_dev.init();                 // 初始化触摸屏（电阻/电容自动检测）
+    app_log("[APP] touch ok\r\n");
+    app_log("[APP] mem init\r\n");
     my_mem_init(SRAMIN);        // 初始化内部内存池
+    app_log("[APP] mem ok\r\n");
+    app_log("[APP] fatfs init\r\n");
     exfuns_init();              // 挂载 FATFS 文件系统
+    app_log("[APP] fatfs ok\r\n");
   /* USER CODE END 2 */
 
   /* Init scheduler */
+  app_log("[APP] kernel init\r\n");
   osKernelInitialize();  /* Call init function for freertos objects (in cmsis_os2.c) */
+  app_log("[APP] freertos init\r\n");
   MX_FREERTOS_Init();
 
   /* Start scheduler */
+  app_log("[APP] kernel start\r\n");
   osKernelStart();
 
   /* We should never get here as control is now taken by the scheduler */
@@ -261,6 +287,7 @@ void Error_Handler(void)
 {
   /* USER CODE BEGIN Error_Handler_Debug */
   /* User can add his own implementation to report the HAL error return state */
+  app_log("[APP] error\r\n");
   __disable_irq();
   while (1)
   {

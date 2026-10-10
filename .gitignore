@@ -1,3 +1,34 @@
 build
 mx.scratch
 !.settings
+
+# Keil / ARMCC build outputs
+MDK-ARM/ai_project/
+MDK-ARM/bootloader/
+MDK-ARM/app_ota/
+MDK-ARM/*.lst
+MDK-ARM/*.uvguix.*
+MDK-ARM/RTE/
+MDK-ARM/DebugConfig/*_1.0.1.dbgconf
+*.o
+*.d
+*.crf
+*.axf
+*.hex
+*.map
+*.lnp
+*.dep
+*.htm
+
+# LaTeX generated files
+*.aux
+*.log
+*.out
+*.toc
+*.synctex.gz
+
+# Local rescue backups created during project surgery
+*.bak_*
+
+# Local private secrets
+Core/Inc/ai_secrets.h

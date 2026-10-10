@@ -46,6 +46,7 @@
 
 
 #include "stm32f4xx.h"
+#include "ota_config.h"
 
 #if !defined  (HSE_VALUE) 
   #define HSE_VALUE    ((uint32_t)25000000) /*!< Default value of the External oscillator in Hz */
@@ -91,6 +92,10 @@
 /*!< Uncomment the following line if you need to relocate the vector table
      anywhere in Flash or Sram, else the vector table is kept at the automatic
      remap of boot address selected */
+#if OTA_APP_RELOCATE_VECTOR
+#define USER_VECT_TAB_ADDRESS
+#define VECT_TAB_OFFSET         OTA_APP_VECTOR_OFFSET
+#endif
 /* #define USER_VECT_TAB_ADDRESS */
 
 #if defined(USER_VECT_TAB_ADDRESS)

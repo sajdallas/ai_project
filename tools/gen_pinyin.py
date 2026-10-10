@@ -15,7 +15,7 @@ import io
 import urllib.request
 
 PROJECT = r"D:\STMPRO\ai_project"
-CHAR_LIST = os.path.join(PROJECT, "gb2312_l1.txt")
+CHAR_LIST = os.path.join(PROJECT, "tools", "font", "gb2312_l1.txt")
 PINYIN_URL = "https://raw.githubusercontent.com/mozillazg/pinyin-data/master/pinyin.txt"
 PINYIN_CACHE = os.path.join(PROJECT, "tools", "pinyin.txt")
 HANZI_URL = "https://raw.githubusercontent.com/ruddfawcett/hanziDB.csv/master/hanzi_db.csv"
